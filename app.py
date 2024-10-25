@@ -142,6 +142,7 @@ def calculate_total(order_items):
         total_price += item_price * quantity
     return round(total_price, 2)
 
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     req = request.get_json(silent=True, force=True)
@@ -163,7 +164,6 @@ def webhook():
             else:
                 return ''
         return value
-
 
     if intent_name == 'OrderFood':
         # Handle adding items to the order
@@ -229,7 +229,6 @@ def webhook():
         response_text = f"Great! I've added {quantity} {full_item_name} to your order. Would you like anything else?"
         return jsonify({'fulfillmentText': response_text})
 
-
     elif intent_name == 'ProvideNuggetCount':
         # Handle providing the count for nuggets
         parameters = req.get('queryResult', {}).get('parameters', {})
@@ -245,7 +244,8 @@ def webhook():
         food_item = ''
         for context in contexts:
             if 'awaiting_nugget_count' in context.get('name', ''):
-                food_item = get_first(context.get('parameters', {}).get('FoodItem', '')).strip()
+                food_item = get_first(context.get(
+                    'parameters', {}).get('FoodItem', '')).strip()
                 break
 
         if not food_item:
@@ -278,7 +278,6 @@ def webhook():
 
         response_text = f"Great! I've added {quantity} {full_item_name} to your order. Would you like anything else?"
         return jsonify({'fulfillmentText': response_text})
-
 
     elif intent_name == 'ModifyOrder':
         # Handle modifying an item in the order
@@ -365,7 +364,6 @@ def webhook():
 
         return jsonify({'fulfillmentText': response_text})
 
-
     elif intent_name == 'AddAnotherOne':
         # Handle adding another of the last ordered item
         last_item = last_ordered_item.get(session_id)
@@ -424,7 +422,6 @@ def webhook():
 
         return jsonify({'fulfillmentText': response_text})
 
-
     elif intent_name == 'ConfirmOrder':
         # Handle order confirmation
         response_text = "Your order has been placed successfully! Thank you for choosing Chick-fil-A."
@@ -445,6 +442,7 @@ def webhook():
         response_text = "I'm sorry, I didn't understand that. Could you please rephrase?"
         return jsonify({'fulfillmentText': response_text})
 
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -452,17 +450,20 @@ def index():
 # If you're using the Dialogflow API directly for your frontend, ensure you have the necessary setup.
 # The following code is optional and only required if you're making direct API calls from your frontend.
 
+
 @app.route('/send_message', methods=['POST'])
 def send_message():
     user_message = request.json.get('message')
 
     # Send the message to Dialogflow
-    response = detect_intent_texts('your-project-id', 'unique-session-id', [user_message], 'en-US')
+    response = detect_intent_texts(
+        'your-project-id', 'unique-session-id', [user_message], 'en-US')
 
     # Extract the reply
     bot_reply = response.query_result.fulfillment_text
 
     return jsonify({'reply': bot_reply})
+
 
 def detect_intent_texts(project_id, session_id, texts, language_code):
     import dialogflow_v2 as dialogflow
@@ -474,12 +475,15 @@ def detect_intent_texts(project_id, session_id, texts, language_code):
 
     session = session_client.session_path(project_id, session_id)
 
-    text_input = dialogflow.types.TextInput(text=texts[0], language_code=language_code)
+    text_input = dialogflow.types.TextInput(
+        text=texts[0], language_code=language_code)
     query_input = dialogflow.types.QueryInput(text=text_input)
 
-    response = session_client.detect_intent(session=session, query_input=query_input)
+    response = session_client.detect_intent(
+        session=session, query_input=query_input)
 
     return response
 
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(debug=True)
