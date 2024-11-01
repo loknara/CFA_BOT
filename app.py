@@ -1,8 +1,10 @@
 from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
 import os
 import json
 
 app = Flask(__name__)
+CORS(app)
 
 # In-memory storage for orders and last ordered item per session
 orders = {}
@@ -486,4 +488,4 @@ def detect_intent_texts(project_id, session_id, texts, language_code):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
