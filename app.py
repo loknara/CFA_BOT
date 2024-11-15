@@ -134,6 +134,7 @@ price_list = {
     "Zesty Apple Cider Vinaigrette Dressing": 0.00,
 }
 
+
 def calculate_total(order_items):
     total_price = 0.0
     for item in order_items:
@@ -143,36 +144,38 @@ def calculate_total(order_items):
         total_price += item_price * quantity
     return round(total_price, 2)
 
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         print("\n=== WEBHOOK REQUEST ===")
         req = request.get_json(silent=True, force=True)
         print("Raw Request:", json.dumps(req, indent=2))
-        
+
         session_id = req.get('session')
         query_result = req.get('queryResult', {})
         intent_name = query_result.get('intent', {}).get('displayName')
         query_text = query_result.get('queryText', '').lower()
         parameters = query_result.get('parameters', {})
-        
+
         # Initialize orders if needed
         if session_id not in orders:
             orders[session_id] = []
-        
+
         print(f"Session ID: {session_id}")
         print(f"Received intent: {intent_name}")
         print(f"Query Text: {query_text}")
         print(f"Parameters: {parameters}")
-        print(f"Current orders before processing: {orders.get(session_id, [])}")
-        
+        print(
+            f"Current orders before processing: {orders.get(session_id, [])}")
+
         if intent_name == 'OrderFood':
             food_items = parameters.get('FoodItem', [])
             quantity = parameters.get('number', 1)
-            
+
             if not quantity:
                 quantity = 1
-                
+
             if isinstance(food_items, list) and food_items:
                 food_item = food_items[0]
             else:
@@ -182,14 +185,14 @@ def webhook():
                 return jsonify({
                     'fulfillmentText': "Would you like your chicken sandwich original or spicy?"
                 })
-            
+
             order_item = {
                 'food_item': food_item,
                 'quantity': quantity
             }
             orders[session_id].append(order_item)
             print(f"Added to order: {order_item}")
-            
+
             return jsonify({
                 'fulfillmentText': f"Great! I've added {quantity} {food_item} to your order. Would you like anything else?"
             })
@@ -227,13 +230,13 @@ def webhook():
                 return jsonify({
                     'fulfillmentText': "You haven't ordered anything yet."
                 })
-            
+
             order_summary = ''
             for item in order_items:
                 quantity = item.get('quantity', 1)
                 food_item = item['food_item']
                 order_summary += f"{quantity} x {food_item}\n"
-            
+
             total_price = calculate_total(order_items)
             return jsonify({
                 'fulfillmentText': f"Here's your current order:\n{order_summary}\nTotal: ${total_price:.2f}"
@@ -245,13 +248,13 @@ def webhook():
                 return jsonify({
                     'fulfillmentText': "It seems you haven't ordered anything yet. What would you like to order?"
                 })
-            
+
             order_summary = ''
             for item in order_items:
                 quantity = item.get('quantity', 1)
                 food_item = item['food_item']
                 order_summary += f"{quantity} x {food_item}\n"
-            
+
             total_price = calculate_total(order_items)
             return jsonify({
                 'fulfillmentText': f"Thank you for your order! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nWould you like to confirm your order?"
@@ -264,14 +267,14 @@ def webhook():
                 return jsonify({
                     'fulfillmentText': "It seems you haven't ordered anything yet. What would you like to order?"
                 })
-            
+
             # Confirm the order
             order_summary = ''
             for item in order_items:
                 quantity = item.get('quantity', 1)
                 food_item = item['food_item']
                 order_summary += f"{quantity} x {food_item}\n"
-            
+
             total_price = calculate_total(order_items)
             # Clear the order after confirmation
             orders[session_id] = []
@@ -283,14 +286,14 @@ def webhook():
             return jsonify({
                 'fulfillmentText': "Welcome to Chick-fil-A! How can I help you today?"
             })
-        
+
         else:
             return jsonify({
                 'fulfillmentText': "I'm sorry, I didn't understand that. Could you please rephrase?"
             })
-        
+
         print(f"Current orders after processing: {orders.get(session_id, [])}")
-    
+
     except Exception as e:
         print(f"Error in webhook: {str(e)}")
         import traceback
@@ -299,6 +302,7 @@ def webhook():
             'fulfillmentText': "I encountered an error processing your request."
         })
 
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -306,14 +310,14 @@ def index():
 # If you're using the Dialogflow API directly for your frontend, ensure you have the necessary setup.
 # The following code is optional and only required if you're making direct API calls from your frontend.
 
-@app.route('/send_message', methods=['POST'])
-def send_message():
-    user_message = request.json.get('message')
+# @app.route('/send_message', methods=['POST'])
+# def send_message():
+#     user_message = request.json.get('message')
 
-    # Send the message to Dialogflow
-    response = detect_intent_texts(
-        'your-project-id', 'unique-session-id', [user_message], 'en-US')
+#     # Send the message to Dialogflow
+#     response = detect_intent_texts(
+#         'your-project-id', 'unique-session-id', [user_message], 'en-US')
 
-    # Extract the reply
-    bot_reply = response.query_result.fulfillment_text
-    return jsonify({'reply': bot_reply})
+#     # Extract the reply
+#     bot_reply = response.query_result.fulfillment_text
+#     return jsonify({'reply': bot_reply})
