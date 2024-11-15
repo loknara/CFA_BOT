@@ -460,3 +460,8 @@ def index():
 #     # Extract the reply
 #     bot_reply = response.query_result.fulfillment_text
 #     return jsonify({'reply': bot_reply})
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
