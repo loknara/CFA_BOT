@@ -134,20 +134,69 @@ price_list = {
     "Zesty Apple Cider Vinaigrette Dressing": 0.00,
 }
 
+# Add this mapping dictionary at the top with your other global variables
+item_name_mapping = {
+    "Waffle Fries": "Waffle Potato Fries",
+    "Milkshake": "Milkshake",
+}
+
+# Update or add the size_required_items list
+size_required_items = [
+    "Waffle Potato Fries",
+    "Milkshake",
+    # Add other items that require size
+]
+
 def calculate_total(order_items):
-    total_price = 0.0
+    total = 0.0
     for item in order_items:
-        item_name = item['food_item']
+        food_item = item['food_item']
         quantity = item.get('quantity', 1)
-        item_price = price_list.get(item_name, 0.0)
-        total_price += item_price * quantity
-    return round(total_price, 2)
+        # Calculate total price for each item
+        total += price_list.get(food_item, 0) * quantity
+    return total
+
+def get_full_item_name(food_item, size):
+    # First map the entity name to the price list name if needed
+    mapped_item = item_name_mapping.get(food_item, food_item)
+    
+    # Items that require size specification
+    size_required_items = [
+        "Waffle Potato Fries",
+        "Mac & Cheese",
+        "Fruit Cup",
+        "Chicken Noodle Soup",
+        "Milkshake",
+        "Freshly-Brewed Iced Tea Sweetened",
+        "Freshly-Brewed Iced Tea Unsweetened",
+        "Chick-fil-A Lemonade",
+        "Chick-fil-A Diet Lemonade",
+        "Soft Drink",
+        "Iced Coffee",
+        "Sunjoy",
+        "Frosted Lemonade",
+        "Frosted Coffee",
+        "Peppermint Chocolate Chip Milkshake"
+    ]
+
+    # Check if the mapped item needs a size
+    for item in size_required_items:
+        if item in mapped_item:
+            # If no size specified, default to Medium
+            if not size:
+                return f"{mapped_item} (Medium)"
+            return f"{mapped_item} ({size})"
+    
+    return mapped_item
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         print("\n=== WEBHOOK REQUEST ===")
         req = request.get_json(silent=True, force=True)
+        if req is None:
+            return jsonify({'fulfillmentText': "Invalid request format."})
+
         print("Raw Request:", json.dumps(req, indent=2))
         
         session_id = req.get('session')
@@ -168,30 +217,108 @@ def webhook():
         
         if intent_name == 'OrderFood':
             food_items = parameters.get('FoodItem', [])
-            quantity = parameters.get('number', 1)
+            size = parameters.get('Size', '')
             
-            if not quantity:
+            # Fix quantity handling
+            number_param = parameters.get('number', '')
+            try:
+                quantity = int(float(number_param)) if number_param else 1
+            except (ValueError, TypeError):
                 quantity = 1
+            
+            # Store the last ordered item and its quantity for size specification
+            if food_items:
+                last_ordered_item[session_id] = {
+                    'item': food_items[0],
+                    'quantity': quantity
+                }
+            
+            for food_item in food_items:
+                mapped_item = item_name_mapping.get(food_item, food_item)
                 
-            if isinstance(food_items, list) and food_items:
-                food_item = food_items[0]
-            else:
-                food_item = str(food_items)
-
-            if 'chicken sandwich' in food_item.lower():
+                # If no size was specified for items that need size, ask for it
+                if not size and mapped_item in size_required_items:
+                    return jsonify({
+                        'fulfillmentText': f"What size would you like for your {food_item}? (Small, Medium, or Large)"
+                    })
+                
+                # Add size if needed
+                if mapped_item in size_required_items:
+                    full_item_name = f"{mapped_item} ({size or 'Medium'})"
+                else:
+                    full_item_name = mapped_item
+                
+                order_item = {
+                    'food_item': full_item_name,
+                    'quantity': quantity
+                }
+                orders[session_id].append(order_item)
+                print(f"Added to order: {order_item}")
+                
                 return jsonify({
-                    'fulfillmentText': "Would you like your chicken sandwich original or spicy?"
+                    'fulfillmentText': f"{quantity} {full_item_name} has been added to your cart. Would you like anything else?"
+                })
+
+        elif intent_name == 'ModifyOrder':
+            size = parameters.get('Size', '')
+            
+            # Check if this is a response to a size question for a new item
+            if size and session_id in last_ordered_item:
+                pending_item = last_ordered_item[session_id]
+                food_item = pending_item['item']
+                quantity = pending_item['quantity']
+                
+                mapped_item = item_name_mapping.get(food_item, food_item)
+                full_item_name = f"{mapped_item} ({size})"
+                
+                order_item = {
+                    'food_item': full_item_name,
+                    'quantity': quantity
+                }
+                orders[session_id].append(order_item)
+                del last_ordered_item[session_id]  # Clear the pending item
+                
+                return jsonify({
+                    'fulfillmentText': f"I've added {quantity} {full_item_name} to your order. Would you like anything else?"
                 })
             
-            order_item = {
-                'food_item': food_item,
-                'quantity': quantity
-            }
-            orders[session_id].append(order_item)
-            print(f"Added to order: {order_item}")
+            # Regular size modification for existing items
+            elif size and orders[session_id]:
+                last_item = orders[session_id][-1]
+                item_name = last_item['food_item']
+                base_name = item_name.split(' (')[0]  # Remove existing size if present
+                
+                if base_name in size_required_items:
+                    new_item_name = f"{base_name} ({size})"
+                    orders[session_id][-1]['food_item'] = new_item_name
+                    return jsonify({
+                        'fulfillmentText': f"I've updated your {base_name} to {size} size. Anything else?"
+                    })
+                else:
+                    return jsonify({
+                        'fulfillmentText': f"Sorry, I can't modify the size of a {base_name}."
+                    })
             
+            # Handle spicy/original modifications
+            if 'spicy' in query_text or 'original' in query_text:
+                last_item = orders[session_id][-1]
+                item_name = last_item['food_item']
+                
+                if 'Chicken Sandwich' in item_name:
+                    if 'spicy' in query_text:
+                        orders[session_id][-1]['food_item'] = 'Spicy Chicken Sandwich'
+                        return jsonify({
+                            'fulfillmentText': "I've changed your sandwich to Spicy Chicken Sandwich. Anything else?"
+                        })
+                    elif 'original' in query_text:
+                        orders[session_id][-1]['food_item'] = 'Chicken Sandwich'
+                        return jsonify({
+                            'fulfillmentText': "I've changed your sandwich to Original Chicken Sandwich. Anything else?"
+                        })
+                
+            # Default response if modification type not recognized
             return jsonify({
-                'fulfillmentText': f"Great! I've added {quantity} {food_item} to your order. Would you like anything else?"
+                'fulfillmentText': "I'm not sure how to modify your order that way. You can change sizes or switch between spicy and original for sandwiches."
             })
 
         elif intent_name == 'SandwichSpicyOrNot':
@@ -207,10 +334,10 @@ def webhook():
             orders[session_id].append(order_item)
             print(f"Added to order: {order_item}")
             return jsonify({
-                'fulfillmentText': "Great! I've added a Spicy Chicken Sandwich to your order. Would you like anything else?"
+                'fulfillmentText': f"Sure, I have added a Spicy Chicken Sandwich to your order."
             })
 
-        elif intent_name == 'SandwichSpicyOrNot - custom 2':
+        elif intent_name == 'SandwichSpicyOrNot - custom-2':
             order_item = {
                 'food_item': 'Chicken Sandwich',
                 'quantity': 1
@@ -218,7 +345,7 @@ def webhook():
             orders[session_id].append(order_item)
             print(f"Added to order: {order_item}")
             return jsonify({
-                'fulfillmentText': "Great! I've added a Chicken Sandwich to your order. Would you like anything else?"
+                'fulfillmentText': f"Sure, I have added a Chicken Sandwich to your order."
             })
 
         elif intent_name == 'ReviewOrder':
