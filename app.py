@@ -6,7 +6,7 @@ import json
 app = Flask(__name__)
 CORS(app)
 
-# In-memory storage for orders and last ordered item per session
+# Global storage for orders
 orders = {}
 last_ordered_item = {}
 
@@ -134,7 +134,6 @@ price_list = {
     "Zesty Apple Cider Vinaigrette Dressing": 0.00,
 }
 
-
 def calculate_total(order_items):
     total_price = 0.0
     for item in order_items:
@@ -144,306 +143,161 @@ def calculate_total(order_items):
         total_price += item_price * quantity
     return round(total_price, 2)
 
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    req = request.get_json(silent=True, force=True)
-
-    # Extract session ID to keep track of the user's session
-    session_id = req.get('session')
-
-    # Extract intent name
-    intent_name = req.get('queryResult').get('intent').get('displayName')
-
-    # Initialize order for this session if it doesn't exist
-    if session_id not in orders:
-        orders[session_id] = []
-
-    def get_first(value):
-        if isinstance(value, list):
-            if value:
-                return value[0]
-            else:
-                return ''
-        return value
-
-    if intent_name == 'OrderFood':
-        # Handle adding items to the order
-        parameters = req.get('queryResult', {}).get('parameters', {})
-        food_item = get_first(parameters.get('FoodItem', '')).strip()
-        size = get_first(parameters.get('Size', '')).strip()
-        count = get_first(parameters.get('Count', '')).strip()
-        quantity = get_first(parameters.get('number', 1))
-        if quantity:
-            quantity = int(quantity)
-        else:
-            quantity = 1
-
-        # Debugging statements
-        print(f"Intent: {intent_name}")
-        print(f"Parameters: {parameters}")
-        print(f"Extracted food_item: '{food_item}'")
-        print(f"Extracted size: '{size}'")
-        print(f"Extracted count: '{count}'")
-        print(f"Quantity: {quantity}")
-
+    try:
+        print("\n=== WEBHOOK REQUEST ===")
+        req = request.get_json(silent=True, force=True)
+        print("Raw Request:", json.dumps(req, indent=2))
+        
         session_id = req.get('session')
+        query_result = req.get('queryResult', {})
+        intent_name = query_result.get('intent', {}).get('displayName')
+        query_text = query_result.get('queryText', '').lower()
+        parameters = query_result.get('parameters', {})
+        
+        # Initialize orders if needed
+        if session_id not in orders:
+            orders[session_id] = []
+        
+        print(f"Session ID: {session_id}")
+        print(f"Received intent: {intent_name}")
+        print(f"Query Text: {query_text}")
+        print(f"Parameters: {parameters}")
+        print(f"Current orders before processing: {orders.get(session_id, [])}")
+        
+        if intent_name == 'OrderFood':
+            food_items = parameters.get('FoodItem', [])
+            quantity = parameters.get('number', 1)
+            
+            if not quantity:
+                quantity = 1
+                
+            if isinstance(food_items, list) and food_items:
+                food_item = food_items[0]
+            else:
+                food_item = str(food_items)
 
-        # If the user orders Nuggets without specifying a count
-        if food_item.lower() == 'nuggets' and not count:
-            response_text = "How many pieces would you like for your nuggets? We have 8-count and 12-count."
-            # Set output context with 'FoodItem' parameter
-            output_contexts = [{
-                "name": f"{session_id}/contexts/awaiting_nugget_count",
-                "lifespanCount": 5,
-                "parameters": {
-                    "FoodItem": food_item,
-                    "Size": size,
-                    "number": quantity
-                }
-            }]
+            if 'chicken sandwich' in food_item.lower():
+                return jsonify({
+                    'fulfillmentText': "Would you like your chicken sandwich original or spicy?"
+                })
+            
+            order_item = {
+                'food_item': food_item,
+                'quantity': quantity
+            }
+            orders[session_id].append(order_item)
+            print(f"Added to order: {order_item}")
+            
             return jsonify({
-                'fulfillmentText': response_text,
-                'outputContexts': output_contexts
+                'fulfillmentText': f"Great! I've added {quantity} {food_item} to your order. Would you like anything else?"
             })
 
-        # Concatenate size or count with food item if provided
-        if count:
-            full_item_name = f"{food_item} ({count})"
-        elif size:
-            full_item_name = f"{food_item} ({size})"
-        else:
-            full_item_name = food_item
+        elif intent_name == 'SandwichSpicyOrNot':
+            return jsonify({
+                'fulfillmentText': "Would you like your chicken sandwich original or spicy?"
+            })
 
-        # Check if the item is in the price list
-        if full_item_name not in price_list:
-            response_text = f"Sorry, we don't have {full_item_name} on the menu."
-            return jsonify({'fulfillmentText': response_text})
+        elif intent_name == 'SandwichSpicyOrNot - custom':
+            order_item = {
+                'food_item': 'Spicy Chicken Sandwich',
+                'quantity': 1
+            }
+            orders[session_id].append(order_item)
+            print(f"Added to order: {order_item}")
+            return jsonify({
+                'fulfillmentText': "Great! I've added a Spicy Chicken Sandwich to your order. Would you like anything else?"
+            })
 
-        # Add the item to the order
-        order_item = {
-            'food_item': full_item_name,
-            'quantity': quantity
-        }
-        orders.setdefault(session_id, []).append(order_item)
-        last_ordered_item[session_id] = order_item
+        elif intent_name == 'SandwichSpicyOrNot - custom 2':
+            order_item = {
+                'food_item': 'Chicken Sandwich',
+                'quantity': 1
+            }
+            orders[session_id].append(order_item)
+            print(f"Added to order: {order_item}")
+            return jsonify({
+                'fulfillmentText': "Great! I've added a Chicken Sandwich to your order. Would you like anything else?"
+            })
 
-        response_text = f"Great! I've added {quantity} {full_item_name} to your order. Would you like anything else?"
-        return jsonify({'fulfillmentText': response_text})
-
-    elif intent_name == 'ProvideNuggetCount':
-        # Handle providing the count for nuggets
-        parameters = req.get('queryResult', {}).get('parameters', {})
-        count = get_first(parameters.get('Count', '')).strip()
-        quantity = get_first(parameters.get('number', 1))
-        if quantity:
-            quantity = int(quantity)
-        else:
-            quantity = 1
-
-        # Retrieve 'FoodItem' from context
-        contexts = req.get('queryResult', {}).get('outputContexts', [])
-        food_item = ''
-        for context in contexts:
-            if 'awaiting_nugget_count' in context.get('name', ''):
-                food_item = get_first(context.get(
-                    'parameters', {}).get('FoodItem', '')).strip()
-                break
-
-        if not food_item:
-            response_text = "Sorry, I'm not sure which item you're referring to. Please start your order again."
-            return jsonify({'fulfillmentText': response_text})
-
-        # Debugging statements
-        print(f"Intent: {intent_name}")
-        print(f"Parameters: {parameters}")
-        print(f"Extracted food_item from context: '{food_item}'")
-        print(f"Extracted count: '{count}'")
-        print(f"Quantity: {quantity}")
-
-        full_item_name = f"{food_item} ({count})"
-
-        # Check if the item is in the price list
-        if full_item_name not in price_list:
-            response_text = f"Sorry, we don't have {full_item_name} on the menu."
-            return jsonify({'fulfillmentText': response_text})
-
-        session_id = req.get('session')
-
-        # Add the item to the order
-        order_item = {
-            'food_item': full_item_name,
-            'quantity': quantity
-        }
-        orders.setdefault(session_id, []).append(order_item)
-        last_ordered_item[session_id] = order_item
-
-        response_text = f"Great! I've added {quantity} {full_item_name} to your order. Would you like anything else?"
-        return jsonify({'fulfillmentText': response_text})
-
-    elif intent_name == 'ModifyOrder':
-        # Handle modifying an item in the order
-        parameters = req.get('queryResult', {}).get('parameters', {})
-        size = get_first(parameters.get('Size', '')).strip()
-        count = get_first(parameters.get('Count', '')).strip()
-        quantity = get_first(parameters.get('number', None))
-        food_item = get_first(parameters.get('FoodItem', ''))
-        if isinstance(food_item, str):
-            food_item = food_item.strip()
-        else:
-            food_item = ''
-
-        # Debugging statements
-        print(f"Intent: {intent_name}")
-        print(f"Parameters: {parameters}")
-        print(f"Extracted food_item: '{food_item}'")
-        print(f"Extracted size: '{size}'")
-        print(f"Extracted count: '{count}'")
-        print(f"Quantity: {quantity}")
-
-        # If 'Count' is empty but 'Size' contains 'count', adjust accordingly
-        if not count and 'count' in size.lower():
-            count = size
-            size = ''
-
-        # Rest of your existing code...
-
-        order_items = orders.get(session_id, [])
-        if not order_items:
-            response_text = "You don't have any items in your order to modify."
-            return jsonify({'fulfillmentText': response_text})
-
-        # Determine which item to modify
-        if food_item:
-            # Concatenate size or count with food item if provided
-            if count:
-                full_item_name = f"{food_item} ({count})"
-            elif size:
-                full_item_name = f"{food_item} ({size})"
-            else:
-                full_item_name = food_item
-        else:
-            # Modify the last ordered item if no food item specified
-            last_item = last_ordered_item.get(session_id)
-            if not last_item:
-                response_text = "Please specify which item you'd like to modify."
-                return jsonify({'fulfillmentText': response_text})
-            full_item_name = last_item['food_item']
-            # Update the food_item variable
-            food_item = last_item['food_item']
-
-        # Normalize item names for matching
-        full_item_name_normalized = full_item_name.lower().strip()
-
-        # Find the item in the order
-        item_found = False
-        for item in order_items:
-            item_name_normalized = item['food_item'].lower().strip()
-            if item_name_normalized == full_item_name_normalized or item_name_normalized.startswith(full_item_name_normalized.split('(')[0].strip()):
-                # Modify the item
-                if size or count:
-                    # Update the size or count in the item name
-                    parts = item['food_item'].split('(')
-                    base_name = parts[0].strip()
-                    if count:
-                        new_item_name = f"{base_name} ({count})"
-                    elif size:
-                        new_item_name = f"{base_name} ({size})"
-                    else:
-                        new_item_name = base_name
-                    item['food_item'] = new_item_name
-                if quantity:
-                    item['quantity'] = int(quantity)
-                item_found = True
-                # Update the last ordered item
-                last_ordered_item[session_id] = item
-                break
-
-        if item_found:
-            response_text = f"Your order has been updated."
-        else:
-            response_text = f"Could not find the item in your order to modify."
-
-        return jsonify({'fulfillmentText': response_text})
-
-    elif intent_name == 'AddAnotherOne':
-        # Handle adding another of the last ordered item
-        last_item = last_ordered_item.get(session_id)
-        if not last_item:
-            response_text = "There is no recent item to add. What would you like to order?"
-            return jsonify({'fulfillmentText': response_text})
-
-        # Add another one of the last ordered item
-        new_item = last_item.copy()
-        orders[session_id].append(new_item)
-
-        response_text = f"Added another {new_item['food_item']} to your order."
-        return jsonify({'fulfillmentText': response_text})
-
-    elif intent_name == 'OrderCompletion':
-        # Handle order completion
-        order_items = orders.get(session_id, [])
-        if not order_items:
-            response_text = "It seems you haven't ordered anything yet. What would you like to order?"
-            return jsonify({'fulfillmentText': response_text})
-        else:
-            # Generate order summary text
+        elif intent_name == 'ReviewOrder':
+            order_items = orders.get(session_id, [])
+            if not order_items:
+                return jsonify({
+                    'fulfillmentText': "You haven't ordered anything yet."
+                })
+            
             order_summary = ''
             for item in order_items:
-                quantity = item['quantity']
+                quantity = item.get('quantity', 1)
                 food_item = item['food_item']
                 order_summary += f"{quantity} x {food_item}\n"
-            order_summary = order_summary.strip()
-
-            # Calculate total price
+            
             total_price = calculate_total(order_items)
+            return jsonify({
+                'fulfillmentText': f"Here's your current order:\n{order_summary}\nTotal: ${total_price:.2f}"
+            })
 
-            response_text = f"Thank you for your order! You have ordered:\n{order_summary}\nYour total is ${total_price}. Would you like to confirm your order?"
-
-            return jsonify({'fulfillmentText': response_text})
-
-    elif intent_name == 'ReviewOrder':
-        # Handle order review
-        order_items = orders.get(session_id, [])
-        if not order_items:
-            response_text = "You haven't ordered anything yet."
-            return jsonify({'fulfillmentText': response_text})
-        else:
-            # Generate order summary text
+        elif intent_name == 'OrderCompletion':
+            order_items = orders.get(session_id, [])
+            if not order_items:
+                return jsonify({
+                    'fulfillmentText': "It seems you haven't ordered anything yet. What would you like to order?"
+                })
+            
             order_summary = ''
             for item in order_items:
-                quantity = item['quantity']
+                quantity = item.get('quantity', 1)
                 food_item = item['food_item']
                 order_summary += f"{quantity} x {food_item}\n"
-            order_summary = order_summary.strip()
-
-            # Calculate total price
+            
             total_price = calculate_total(order_items)
+            return jsonify({
+                'fulfillmentText': f"Thank you for your order! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nWould you like to confirm your order?"
+            })
 
-            response_text = f"You have ordered:\n{order_summary}\nYour current total is ${total_price}. Would you like to confirm your order?"
+        elif intent_name == 'ConfirmOrder':
+            # Handle order confirmation
+            order_items = orders.get(session_id, [])
+            if not order_items:
+                return jsonify({
+                    'fulfillmentText': "It seems you haven't ordered anything yet. What would you like to order?"
+                })
+            
+            # Confirm the order
+            order_summary = ''
+            for item in order_items:
+                quantity = item.get('quantity', 1)
+                food_item = item['food_item']
+                order_summary += f"{quantity} x {food_item}\n"
+            
+            total_price = calculate_total(order_items)
+            # Clear the order after confirmation
+            orders[session_id] = []
+            return jsonify({
+                'fulfillmentText': f"Your order has been confirmed! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!"
+            })
 
-        return jsonify({'fulfillmentText': response_text})
-
-    elif intent_name == 'ConfirmOrder':
-        # Handle order confirmation
-        response_text = "Your order has been placed successfully! Thank you for choosing Chick-fil-A."
-        # Clear the order
-        orders.pop(session_id, None)
-        last_ordered_item.pop(session_id, None)
-        return jsonify({'fulfillmentText': response_text})
-
-    elif intent_name == 'CancelOrder':
-        # Handle order cancellation
-        orders.pop(session_id, None)
-        last_ordered_item.pop(session_id, None)
-        response_text = "Your order has been canceled. Let me know if you'd like to start a new order."
-        return jsonify({'fulfillmentText': response_text})
-
-    else:
-        # Handle unrecognized intents
-        response_text = "I'm sorry, I didn't understand that. Could you please rephrase?"
-        return jsonify({'fulfillmentText': response_text})
-
+        elif intent_name == 'Default Welcome Intent':
+            return jsonify({
+                'fulfillmentText': "Welcome to Chick-fil-A! How can I help you today?"
+            })
+        
+        else:
+            return jsonify({
+                'fulfillmentText': "I'm sorry, I didn't understand that. Could you please rephrase?"
+            })
+        
+        print(f"Current orders after processing: {orders.get(session_id, [])}")
+    
+    except Exception as e:
+        print(f"Error in webhook: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'fulfillmentText': "I encountered an error processing your request."
+        })
 
 @app.route('/')
 def index():
@@ -451,7 +305,6 @@ def index():
 
 # If you're using the Dialogflow API directly for your frontend, ensure you have the necessary setup.
 # The following code is optional and only required if you're making direct API calls from your frontend.
-
 
 @app.route('/send_message', methods=['POST'])
 def send_message():
@@ -463,31 +316,4 @@ def send_message():
 
     # Extract the reply
     bot_reply = response.query_result.fulfillment_text
-
     return jsonify({'reply': bot_reply})
-
-
-def detect_intent_texts(project_id, session_id, texts, language_code):
-    import dialogflow_v2 as dialogflow
-
-    # Set the path to the service account key file if not set in environment variables
-    # os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/path/to/your/service-account-file.json'
-
-    session_client = dialogflow.SessionsClient()
-
-    session = session_client.session_path(project_id, session_id)
-
-    text_input = dialogflow.types.TextInput(
-        text=texts[0], language_code=language_code)
-    query_input = dialogflow.types.QueryInput(text=text_input)
-
-    response = session_client.detect_intent(
-        session=session, query_input=query_input)
-
-    return response
-
-
-if __name__ == "__main__":
-    # Get the port from the environment variable or default to 5000
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
