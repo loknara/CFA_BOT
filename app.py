@@ -160,6 +160,8 @@ size_required_items = [
 ]
 
 # Add this function at the top with your other helper functions
+
+
 def calculate_total(order_items):
     total = 0
     for item in order_items:
@@ -170,45 +172,97 @@ def calculate_total(order_items):
         total += price * quantity
     return total
 
+
 # Add this mapping for items that need prefixes
 item_prefix_mapping = {
     "Cool Wrap": "Grilled Cool Wrap",
     # Add other items that need prefixes
 }
 
+# Add this helper function
+
+
+def create_response(message):
+    return jsonify({
+        'fulfillmentText': message,
+        'fulfillmentMessages': [
+            {
+                'text': {
+                    'text': [message]
+                }
+            }
+        ]
+    })
+
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         print("\n=== WEBHOOK REQUEST ===")
         req = request.get_json(silent=True, force=True)
+
+        # Detailed debug logging
+        query_result = req.get('queryResult', {})
+        intent = query_result.get('intent', {})
+
+        print("Intent Data:", {
+            'displayName': intent.get('displayName'),
+            'parameters': query_result.get('parameters'),
+            'queryText': query_result.get('queryText'),
+            'fulfillmentText': query_result.get('fulfillmentText')
+        })
+
+        # Check if intent names match exactly
+        intent_name = intent.get('displayName')
+        print(f"Received intent: '{intent_name}'")
+        print(f"Intent type: {type(intent_name)}")  # Check if it's a string
+
         if req is None:
             return jsonify({'fulfillmentText': "Invalid request format."})
 
         print("Raw Request:", json.dumps(req, indent=2))
-        
+
         session_id = req.get('session')
         query_result = req.get('queryResult', {})
         intent_name = query_result.get('intent', {}).get('displayName')
         query_text = query_result.get('queryText', '').lower()
         parameters = query_result.get('parameters', {})
-        
+
         # Initialize orders if needed
         if session_id not in orders:
             orders[session_id] = []
-        
+
         print(f"Session ID: {session_id}")
         print(f"Received intent: {intent_name}")
         print(f"Query Text: {query_text}")
         print(f"Parameters: {parameters}")
-        print(f"Current orders before processing: {orders.get(session_id, [])}")
+        print(
+            f"Current orders before processing: {orders.get(session_id, [])}")
+
+        # Print out all your handled intents for comparison
+        HANDLED_INTENTS = [
+            'OrderFood',
+            'OrderFood - size',
+            'SpecifySize',
+            'ModifyOrder',
+            'SandwichSpicyOrNot',
+            'SandwichSpicyOrNot - custom',
+            'SandwichSpicyOrNot - custom-2',
+            'ReviewOrder',
+            'OrderCompletion',
+            'ConfirmOrder',
+            'Default Welcome Intent'
+        ]
+        print(
+            f"Is intent '{intent_name}' in handled intents? {intent_name in HANDLED_INTENTS}")
 
         if intent_name == 'OrderFood':
             food_items = parameters.get('FoodItem', [])
             size = parameters.get('Size', '')
-            
+
             for food_item in food_items:
                 mapped_item = item_name_mapping.get(food_item, food_item)
-                
+
                 # If no size was specified for items that need size, ask for it
                 if mapped_item in size_required_items and not size:
                     last_ordered_item[session_id] = {
@@ -218,23 +272,21 @@ def webhook():
                     return jsonify({
                         'fulfillmentText': f"What size would you like for your {food_item}? (Small, Medium, or Large)"
                     })
-                
+
                 # Add size if needed
                 if mapped_item in size_required_items and size:
                     full_item_name = f"{mapped_item} ({size})"
                 else:
                     full_item_name = mapped_item
-                
+
                 order_item = {
                     'food_item': full_item_name,
                     'quantity': 1
                 }
                 orders[session_id].append(order_item)
                 print(f"Added to order: {order_item}")
-                
-                return jsonify({
-                    'fulfillmentText': f"1 {full_item_name} has been added to your cart. Would you like anything else?"
-                })
+
+                return create_response(f"1 {full_item_name} has been added to your cart. Would you like anything else?")
 
         elif intent_name == 'OrderFood - size':
             size = parameters.get('size', '')
@@ -242,7 +294,7 @@ def webhook():
                 pending_item = last_ordered_item[session_id]
                 food_item = pending_item['item']
                 quantity = pending_item['quantity']
-                
+
                 full_item_name = f"{food_item} ({size})"
                 order_item = {
                     'food_item': full_item_name,
@@ -250,10 +302,8 @@ def webhook():
                 }
                 orders[session_id].append(order_item)
                 del last_ordered_item[session_id]
-                
-                return jsonify({
-                    'fulfillmentText': f"I've added {quantity} {full_item_name} to your order. Would you like anything else?"
-                })
+
+                return create_response(f"I've added {quantity} {full_item_name} to your order. Would you like anything else?")
 
         elif intent_name == 'SpecifySize':
             size = parameters.get('Size', '')
@@ -261,7 +311,7 @@ def webhook():
                 pending_item = last_ordered_item[session_id]
                 food_item = pending_item['item']
                 quantity = pending_item['quantity']
-                
+
                 full_item_name = f"{food_item} ({size})"
                 order_item = {
                     'food_item': full_item_name,
@@ -269,38 +319,32 @@ def webhook():
                 }
                 orders[session_id].append(order_item)
                 del last_ordered_item[session_id]
-                
-                return jsonify({
-                    'fulfillmentText': f"I've added {quantity} {full_item_name} to your order. Would you like anything else?"
-                })
+
+                return create_response(f"I've added {quantity} {full_item_name} to your order. Would you like anything else?")
 
         elif intent_name == 'ModifyOrder':
             size = parameters.get('Size', '')
-            
+
             # Check if this is a response to a size question for a new item
             if session_id in last_ordered_item:
                 pending_item = last_ordered_item[session_id]
                 food_item = pending_item['item']
                 quantity = pending_item['quantity']
-                
+
                 mapped_item = item_name_mapping.get(food_item, food_item)
                 full_item_name = f"{mapped_item} ({size})"
-                
+
                 order_item = {
                     'food_item': full_item_name,
                     'quantity': quantity
                 }
                 orders[session_id].append(order_item)
                 del last_ordered_item[session_id]  # Clear the pending item
-                
-                return jsonify({
-                    'fulfillmentText': f"I've added {quantity} {full_item_name} to your order. Would you like anything else?"
-                })
+
+                return create_response(f"I've added {quantity} {full_item_name} to your order. Would you like anything else?")
 
         elif intent_name == 'SandwichSpicyOrNot':
-            return jsonify({
-                'fulfillmentText': "Would you like your chicken sandwich original or spicy?"
-            })
+            return create_response("Would you like your chicken sandwich original or spicy?")
 
         elif intent_name == 'SandwichSpicyOrNot - custom':
             order_item = {
@@ -309,9 +353,7 @@ def webhook():
             }
             orders[session_id].append(order_item)
             print(f"Added to order: {order_item}")
-            return jsonify({
-                'fulfillmentText': f"Sure, I have added a Spicy Chicken Sandwich to your order."
-            })
+            return create_response("Sure, I have added a Spicy Chicken Sandwich to your order.")
 
         elif intent_name == 'SandwichSpicyOrNot - custom-2':
             order_item = {
@@ -320,9 +362,7 @@ def webhook():
             }
             orders[session_id].append(order_item)
             print(f"Added to order: {order_item}")
-            return jsonify({
-                'fulfillmentText': f"Sure, I have added a Chicken Sandwich to your order."
-            })
+            return create_response("Sure, I have added a Chicken Sandwich to your order.")
 
         elif intent_name == 'ReviewOrder':
             order_items = orders.get(session_id, [])
@@ -330,17 +370,15 @@ def webhook():
                 return jsonify({
                     'fulfillmentText': "You haven't ordered anything yet."
                 })
-            
+
             order_summary = ''
             for item in order_items:
                 quantity = item.get('quantity', 1)
                 food_item = item['food_item']
                 order_summary += f"{quantity} x {food_item}\n"
-            
+
             total_price = calculate_total(order_items)
-            return jsonify({
-                'fulfillmentText': f"Here's your current order:\n{order_summary}\nTotal: ${total_price:.2f}"
-            })
+            return create_response(f"Here's your current order:\n{order_summary}\nTotal: ${total_price:.2f}")
 
         elif intent_name == 'OrderCompletion':
             order_items = orders.get(session_id, [])
@@ -348,18 +386,16 @@ def webhook():
                 return jsonify({
                     'fulfillmentText': "It seems you haven't ordered anything yet. What would you like to order?"
                 })
-            
+
             order_summary = ''
             for item in order_items:
                 quantity = item.get('quantity', 1)
                 food_item = item['food_item']
                 price = price_list.get(food_item, 0)
                 order_summary += f"{quantity} x {food_item} (${price:.2f} each)\n"
-            
+
             total_price = calculate_total(order_items)
-            return jsonify({
-                'fulfillmentText': f"Thank you for your order! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nWould you like to confirm your order?"
-            })
+            return create_response(f"Thank you for your order! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nWould you like to confirm your order?")
 
         elif intent_name == 'ConfirmOrder':
             # Handle order confirmation
@@ -368,33 +404,35 @@ def webhook():
                 return jsonify({
                     'fulfillmentText': "It seems you haven't ordered anything yet. What would you like to order?"
                 })
-            
+
             # Confirm the order
             order_summary = ''
             for item in order_items:
                 quantity = item.get('quantity', 1)
                 food_item = item['food_item']
                 order_summary += f"{quantity} x {food_item}\n"
-            
+
             total_price = calculate_total(order_items)
             # Clear the order after confirmation
             orders[session_id] = []
-            return jsonify({
-                'fulfillmentText': f"Your order has been confirmed! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!"
-            })
+            return create_response(f"Your order has been confirmed! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!")
 
         elif intent_name == 'Default Welcome Intent':
+            return create_response("Welcome to Chick-fil-A! How can I help you today?")
+
+        elif intent_name:  # If we have an intent name but didn't handle it
+            print(f"WARNING: Unhandled intent: {intent_name}")
             return jsonify({
-                'fulfillmentText': "Welcome to Chick-fil-A! How can I help you today?"
+                'fulfillmentText': f"Debug: Received intent '{intent_name}' but no handler found."
             })
-        
         else:
+            print("WARNING: No intent name found in request")
             return jsonify({
                 'fulfillmentText': "I'm sorry, I didn't understand that. Could you please rephrase?"
             })
-        
+
         print(f"Current orders after processing: {orders.get(session_id, [])}")
-    
+
     except Exception as e:
         print(f"Error in webhook: {str(e)}")
         import traceback
@@ -403,6 +441,7 @@ def webhook():
             'fulfillmentText': "I encountered an error processing your request."
         })
 
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -410,14 +449,14 @@ def index():
 # If you're using the Dialogflow API directly for your frontend, ensure you have the necessary setup.
 # The following code is optional and only required if you're making direct API calls from your frontend.
 
-@app.route('/send_message', methods=['POST'])
-def send_message():
-    user_message = request.json.get('message')
+# @app.route('/send_message', methods=['POST'])
+# def send_message():
+#     user_message = request.json.get('message')
 
-    # Send the message to Dialogflow
-    response = detect_intent_texts(
-        'your-project-id', 'unique-session-id', [user_message], 'en-US')
+#     # Send the message to Dialogflow
+#     response = detect_intent_texts(
+#         'your-project-id', 'unique-session-id', [user_message], 'en-US')
 
-    # Extract the reply
-    bot_reply = response.query_result.fulfillment_text
-    return jsonify({'reply': bot_reply})
+#     # Extract the reply
+#     bot_reply = response.query_result.fulfillment_text
+#     return jsonify({'reply': bot_reply})
