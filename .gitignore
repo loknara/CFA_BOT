@@ -1,3 +1,23 @@
-__pycache__
-.env
+# Python generated files
+*.pyc
+__pycache__/
+*.egg-info/
+
+# Virtual environment
+.venv/
 venv
+
+# Local configuration
+instance/*
+
+# Testing artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution files
+dist/
+build/
+
+lib/
+
