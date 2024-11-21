@@ -128,23 +128,32 @@ item_name_mapping = {
     # Add other mappings as needed
 }
 
-size_required_items = [
-    "Waffle Potato Fries",
-    "Mac & Cheese",
-    "Fruit Cup",
-    "Chicken Noodle Soup",
-    "Freshly-Brewed Iced Tea Sweetened",
-    "Freshly-Brewed Iced Tea Unsweetened",
-    "Chick-fil-A Lemonade",
-    "Chick-fil-A Diet Lemonade",
-    "Soft Drink",
-    "Iced Coffee",
-    "Sunjoy",
-    "Frosted Lemonade",
-    "Frosted Coffee",
-    "Milkshake",
-    "Peppermint Chocolate Chip Milkshake"
-]
+size_required_items = {
+    "Waffle Potato Fries": "Waffle Potato Fries",
+    "Mac & Cheese": "Mac & Cheese",
+    "Fruit Cup": "Fruit Cup",
+    "Chicken Noodle Soup": "Chicken Noodle Soup",
+    "Sweet Tea": "Freshly-Brewed Iced Tea Sweetened",
+    "Unsweet Tea": "Freshly-Brewed Iced Tea Unsweetened",
+    "Tea": "Freshly-Brewed Iced Tea Sweetened",
+    "Iced Tea": "Freshly-Brewed Iced Tea Sweetened",
+    "Lemonade": "Chick-fil-A Lemonade",
+    "Diet Lemonade": "Chick-fil-A Diet Lemonade",
+    "Soft Drink": "Soft Drink",
+    "Soda": "Soft Drink",
+    "Coke": "Soft Drink",
+    "Sprite": "Soft Drink",
+    "Dr Pepper": "Soft Drink",
+    "Diet Coke": "Soft Drink",
+    "Iced Coffee": "Iced Coffee",
+    "Sunjoy": "Sunjoy",
+    "Frosted Lemonade": "Frosted Lemonade",
+    "Frosted Coffee": "Frosted Coffee",
+    "Milkshake": "Milkshake",
+    "Shake": "Milkshake",
+    "Peppermint Milkshake": "Peppermint Chocolate Chip Milkshake",
+    "Peppermint Chocolate Chip Milkshake": "Peppermint Chocolate Chip Milkshake"
+}
 
 menu_items = {
   "Chicken Sandwich": {
