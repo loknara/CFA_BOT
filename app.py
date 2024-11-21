@@ -3,6 +3,7 @@ from static_data import price_list, item_name_mapping, size_required_items, menu
 from flask_cors import CORS
 import os
 import json
+import re
 
 app = Flask(__name__)
 CORS(app)
@@ -139,52 +140,75 @@ def webhook():
             f"Is intent '{intent_name}' in handled intents? {intent_name in HANDLED_INTENTS}")
 
         if intent_name == 'OrderFood':
-            food_items = parameters.get('FoodItem', [])
-            sizes = parameters.get('Size', [])
-            quantities = parameters.get('number', [])
             query_text = query_result.get('queryText', '').lower()
+            
+            if session_id not in orders:
+                orders[session_id] = []
 
-            # If ordering a chicken sandwich, route to SandwichSpicyOrNot
-            if 'chicken sandwich' in query_text.lower():
-                # Store other items (fries, drinks) in pending orders
-                pending_orders[session_id] = {'items': []}
+            # Split the order text into individual items
+            order_parts = []
+            # First split by comma and 'and'
+            main_parts = re.split(r',|(?:\s+and\s+)', query_text)
+            for part in main_parts:
+                part = part.strip()
+                if part:
+                    # Remove common prefixes like "can i get", "i want", etc.
+                    part = re.sub(r'^(?:can\s+i\s+get|i\s+want|get\s+me|give\s+me)\s+', '', part)
+                    order_parts.append(part.strip())
+
+            # Process each part of the order
+            for part in order_parts:
+                # Extract quantity
+                quantity = 1
+                quantity_match = re.search(r'(\d+)', part)
+                if quantity_match:
+                    quantity = int(quantity_match.group(1))
+                elif 'a ' in part or 'an ' in part:
+                    quantity = 1
                 
-                # Process non-sandwich items
-                for i, item in enumerate(food_items):
-                    if 'chicken sandwich' not in item.lower():
-                        size = sizes[i] if i < len(sizes) else None
-                        quantity = int(quantities[i]) if i < len(quantities) else 1
-                        mapped_item = item_name_mapping.get(item, item)
-                        
-                        if mapped_item in size_required_items and size:
-                            full_item_name = f"{mapped_item} ({size})"
-                        else:
-                            full_item_name = mapped_item
-                            
-                        pending_orders[session_id]['items'].append({
-                            'food_item': full_item_name,
-                            'quantity': quantity
-                        })
+                # Extract size
+                size = None
+                if 'small' in part:
+                    size = 'Small'
+                elif 'medium' in part:
+                    size = 'Medium'
+                elif 'large' in part:
+                    size = 'Large'
                 
-                return create_response("Would you like your chicken sandwich original or spicy?")
+                # Process spicy chicken sandwich
+                if 'spicy' in part and ('sandwich' in part or 'chicken' in part):
+                    orders[session_id].append({
+                        'food_item': 'Spicy Chicken Sandwich',
+                        'quantity': quantity
+                    })
+                
+                # Process fries
+                elif 'fry' in part or 'fries' in part:
+                    size = size or 'Medium'  # Default to medium if no size specified
+                    orders[session_id].append({
+                        'food_item': f'Waffle Potato Fries ({size})',
+                        'quantity': quantity
+                    })
+                
+                # Process drinks (including variations like 'coke', 'drink', etc.)
+                elif any(drink in part for drink in ['drink', 'coke', 'sprite', 'beverage']):
+                    size = size or 'Medium'  # Default to medium if no size specified
+                    orders[session_id].append({
+                        'food_item': f'Soft Drink ({size})',
+                        'quantity': quantity
+                    })
 
-            # Process regular items (non-sandwich orders)
-            for i, food_item in enumerate(food_items):
-                size = sizes[i] if i < len(sizes) else None
-                quantity = int(quantities[i]) if i < len(quantities) else 1
-                mapped_item = item_name_mapping.get(food_item, food_item)
-
-                if mapped_item in size_required_items and size:
-                    full_item_name = f"{mapped_item} ({size})"
-                else:
-                    full_item_name = mapped_item
-
-                orders[session_id].append({
-                    'food_item': full_item_name,
-                    'quantity': quantity
-                })
-
-            return create_response("I've added your items to the order. Would you like anything else?")
+            # Create response with all items
+            if orders[session_id]:
+                added_items = []
+                for item in orders[session_id]:
+                    item_text = f"{item['quantity']} {item['food_item']}"
+                    added_items.append(item_text)
+                
+                response_text = "I've added " + ", ".join(added_items) + " to your order. Would you like anything else?"
+                return create_response(response_text)
+            else:
+                return create_response("I didn't catch that. Could you please repeat your order?")
 
         elif intent_name == 'OrderFood - size':
             size = parameters.get('size', '')
