@@ -8,11 +8,13 @@
 </head>
 <body>
     <div id="chat-container">
-        <div id="chat-window">
-            <div id="messages"></div>
-        </div>
-        <input type="text" id="user-input" placeholder="Type your message here..." autocomplete="off" />
-        <button id="send-button">Send</button>
+        <script src="https://www.gstatic.com/dialogflow-console/fast/messenger/bootstrap.js?v=1"></script>
+        <df-messenger
+        intent="WELCOME"
+        chat-title="CFA_Agent"
+        agent-id="71047fca-9202-4f21-b7d4-954499272531"
+        language-code="en"
+        ></df-messenger>
     </div>
 
     <script>
