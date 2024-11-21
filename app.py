@@ -14,6 +14,8 @@ pending_orders = {}
 last_ordered_item = {}
 
 # Add a function to clear orders for a session
+
+
 def clear_session_data(session_id):
     if session_id in orders:
         del orders[session_id]
@@ -21,6 +23,7 @@ def clear_session_data(session_id):
         del pending_orders[session_id]
     if session_id in last_ordered_item:
         del last_ordered_item[session_id]
+
 
 # Add these new global variables at the top
 drink_name_mapping = {
@@ -38,12 +41,15 @@ item_modifications = {
 }
 
 # Add this helper function for quantity parsing
+
+
 def parse_quantity(text):
     number_words = {
         'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
         'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10
     }
     return number_words.get(text.lower(), 1)
+
 
 def calculate_total(order_items):
     total = 0
@@ -76,6 +82,55 @@ def create_response(message):
             }
         ]
     })
+
+
+# Add these helper functions near the top with other helpers
+def get_menu_items_by_category(category):
+    category_mapping = {
+        'sandwiches': ['Chicken Sandwich', 'Deluxe Chicken Sandwich', 'Spicy Chicken Sandwich',
+                       'Spicy Deluxe Sandwich', 'Grilled Chicken Sandwich', 'Grilled Chicken Club Sandwich'],
+        'salads': ['Cobb Salad', 'Spicy Southwest Salad', 'Market Salad', 'Side Salad'],
+        'drinks': [item for item in menu_items.keys() if any(x in item for x in ['Drink', 'Lemonade', 'Tea', 'Coffee', 'Milk', 'Sunjoy'])],
+        'desserts': [item for item in menu_items.keys() if any(x in item for x in ['Milkshake', 'Cookie', 'Icedream', 'Brownie'])],
+        'sides': [item for item in menu_items.keys() if any(x in item for x in ['Fries', 'Mac & Cheese', 'Fruit Cup', 'Soup'])]
+    }
+    return category_mapping.get(category.lower(), [])
+
+
+def format_menu_item_details(item_name):
+    item = menu_items.get(item_name)
+    if not item:
+        return None
+
+    price = item['price']
+    ingredients = ', '.join(item['ingredients'])
+    return f"{item_name}: ${price:.2f}\nIngredients: {ingredients}"
+
+
+def get_full_item_name(item_name):
+    """Convert partial item names to their full menu item names"""
+    # Check direct mapping first
+    if item_name in item_name_mapping:
+        base_name = item_name_mapping[item_name]
+    else:
+        base_name = item_name
+
+    # If item requires size and no size specified, return small by default
+    if base_name in size_required_items:
+        if not any(size in item_name.lower() for size in ['small', 'medium', 'large']):
+            return f"{base_name} (Small)"
+
+    # Search for exact match first
+    for menu_item in menu_items.keys():
+        if base_name.lower() == menu_item.lower():
+            return menu_item
+
+    # If no exact match, search for partial match
+    for menu_item in menu_items.keys():
+        if base_name.lower() in menu_item.lower():
+            return menu_item
+
+    return None
 
 
 @app.route('/webhook', methods=['POST'])
@@ -134,14 +189,15 @@ def webhook():
             'ReviewOrder',
             'OrderCompletion',
             'ConfirmOrder',
-            'Default Welcome Intent'
+            'Default Welcome Intent',
+            'MenuQuery'
         ]
         print(
             f"Is intent '{intent_name}' in handled intents? {intent_name in HANDLED_INTENTS}")
 
         if intent_name == 'OrderFood':
             query_text = query_result.get('queryText', '').lower()
-            
+
             if session_id not in orders:
                 orders[session_id] = []
 
@@ -153,7 +209,8 @@ def webhook():
                 part = part.strip()
                 if part:
                     # Remove common prefixes like "can i get", "i want", etc.
-                    part = re.sub(r'^(?:can\s+i\s+get|i\s+want|get\s+me|give\s+me)\s+', '', part)
+                    part = re.sub(
+                        r'^(?:can\s+i\s+get|i\s+want|get\s+me|give\s+me)\s+', '', part)
                     order_parts.append(part.strip())
 
             # Process each part of the order
@@ -165,7 +222,7 @@ def webhook():
                     quantity = int(quantity_match.group(1))
                 elif 'a ' in part or 'an ' in part:
                     quantity = 1
-                
+
                 # Extract size
                 size = None
                 if 'small' in part:
@@ -174,14 +231,14 @@ def webhook():
                     size = 'Medium'
                 elif 'large' in part:
                     size = 'Large'
-                
+
                 # Process spicy chicken sandwich
                 if 'spicy' in part and ('sandwich' in part or 'chicken' in part):
                     orders[session_id].append({
                         'food_item': 'Spicy Chicken Sandwich',
                         'quantity': quantity
                     })
-                
+
                 # Process fries
                 elif 'fry' in part or 'fries' in part:
                     size = size or 'Medium'  # Default to medium if no size specified
@@ -189,7 +246,7 @@ def webhook():
                         'food_item': f'Waffle Potato Fries ({size})',
                         'quantity': quantity
                     })
-                
+
                 # Process drinks (including variations like 'coke', 'drink', etc.)
                 elif any(drink in part for drink in ['drink', 'coke', 'sprite', 'beverage']):
                     size = size or 'Medium'  # Default to medium if no size specified
@@ -204,8 +261,10 @@ def webhook():
                 for item in orders[session_id]:
                     item_text = f"{item['quantity']} {item['food_item']}"
                     added_items.append(item_text)
-                
-                response_text = "I've added " + ", ".join(added_items) + " to your order. Would you like anything else?"
+
+                response_text = "I've added " + \
+                    ", ".join(added_items) + \
+                    " to your order. Would you like anything else?"
                 return create_response(response_text)
             else:
                 return create_response("I didn't catch that. Could you please repeat your order?")
@@ -247,10 +306,10 @@ def webhook():
         elif intent_name == 'ModifyOrder':
             action = parameters.get('ModifyAction', '')
             item = parameters.get('FoodItem', '')
-            
+
             if action == 'remove':
-                orders[session_id] = [order for order in orders[session_id] 
-                                    if order['food_item'] != item]
+                orders[session_id] = [order for order in orders[session_id]
+                                      if order['food_item'] != item]
                 return jsonify({
                     'fulfillmentText': f"I've removed {item} from your order."
                 })
@@ -263,7 +322,7 @@ def webhook():
         elif intent_name == 'SandwichSpicyOrNot':
             # Get the original query text that contains all items
             query_text = query_result.get('queryText', '').lower()
-            
+
             # Initialize pending orders for this session
             if session_id not in pending_orders:
                 pending_orders[session_id] = {'items': []}
@@ -297,7 +356,7 @@ def webhook():
             # Add the spicy sandwich
             if session_id not in orders:
                 orders[session_id] = []
-                
+
             order_item = {
                 'food_item': 'Spicy Chicken Sandwich',
                 'quantity': 1
@@ -310,7 +369,7 @@ def webhook():
                 for item in pending_orders[session_id]['items']:
                     orders[session_id].append(item)
                     added_items.append(item['food_item'])
-                
+
                 # Clear pending orders after processing
                 del pending_orders[session_id]
 
@@ -385,16 +444,87 @@ def webhook():
         elif intent_name == 'Default Welcome Intent':
             return create_response("Welcome to Chick-fil-A! How can I help you today?")
 
-        elif intent_name == 'MenuInquiry':
-            item = parameters.get('FoodItem', '')
-            inquiry_type = parameters.get('InquiryType', '')
-            
-            if inquiry_type == 'price':
-                price = price_list.get(item, 0)
-                return jsonify({
-                    'fulfillmentText': f"The {item} costs ${price:.2f}"
-                })
-            # Add more inquiry types as needed
+        elif intent_name == 'MenuQuery':
+            category = parameters.get('menucategory', '').lower()
+            specific_item = parameters.get('fooditem', '')
+            query_text = query_result.get('queryText', '').lower()
+
+            # Clean up category input by removing articles
+            if category:
+                category = category.replace(
+                    'a ', '').replace('the ', '').strip()
+                # If category looks like a specific item, treat it as one
+                if 'sandwich' in category or 'fries' in category or 'drink' in category:
+                    specific_item = category
+                    category = ''
+
+            if specific_item:
+                # Clean up specific item input by removing articles
+                specific_item = specific_item.replace(
+                    'a ', '').replace('the ', '').strip()
+
+                # Handle size specification from query text
+                size_match = None
+                for size in ['small', 'medium', 'large']:
+                    if size in query_text:
+                        size_match = size.title()
+                        break
+
+                # Get full item name
+                base_item_name = get_full_item_name(specific_item)
+                if base_item_name:
+                    if size_match:
+                        full_item_name = f"{base_item_name} ({size_match})"
+                    elif base_item_name in size_required_items:
+                        # Default size
+                        full_item_name = f"{base_item_name} (Medium)"
+                    else:
+                        full_item_name = base_item_name
+
+                if full_item_name in menu_items:
+                    item = menu_items[full_item_name]
+                    ingredients = ', '.join(item['ingredients'])
+                    price = item['price']
+
+                    # More conversational responses based on query
+                    if any(word in query_text for word in ['price', 'cost', 'how much', 'costs']):
+                        size_text = f" {size_match.lower()}" if size_match else ""
+                        response = f"A{size_text} {base_item_name} costs ${price:.2f}. Would you like to know about the ingredients?"
+                    elif 'ingredient' in query_text or 'what' in query_text:
+                        response = f"Our {full_item_name} is made with {ingredients}. Would you like to know the price?"
+                    else:
+                        response = f"Our {full_item_name} is made with {ingredients} and costs ${price:.2f}. Would you like to try it?"
+                    return create_response(response)
+
+                # If no exact match found, try partial matches
+                matching_items = [item for item in menu_items.keys()
+                                  if specific_item.lower() in item.lower()]
+                if matching_items:
+                    response = f"Let me tell you about our {specific_item} options:\n\n"
+                    for item_name in matching_items:
+                        item = menu_items[item_name]
+                        ingredients = ', '.join(item['ingredients'])
+                        price = item['price']
+                        response += f"• {item_name} (${price:.2f}): Made with {ingredients}\n"
+                    response += "\nWould you like to know more about any of these items?"
+                    return create_response(response.strip())
+
+                return create_response(f"I apologize, but I couldn't find any menu items matching '{specific_item}'. Would you like me to tell you about our similar items?")
+
+            elif category:
+                # Search by category
+                items = get_menu_items_by_category(category)
+                if items:
+                    response = f"Here are our {category}:\n\n"
+                    for item in items:
+                        details = format_menu_item_details(item)
+                        if details:
+                            response += f"{details}\n\n"
+                    return create_response(response.strip())
+                return create_response(f"I'm sorry, I couldn't find any items in the '{category}' category.")
+
+            # No category or item specified
+            return create_response("I can tell you about our menu items. Please specify a category (like sandwiches, salads, drinks) or ask about a specific item!")
 
         elif intent_name:  # If we have an intent name but didn't handle it
             print(f"WARNING: Unhandled intent: {intent_name}")
