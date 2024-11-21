@@ -142,6 +142,37 @@ def get_full_item_name(item_name):
     return None
 
 
+# Add at the top with other global variables
+nugget_options = {
+    "regular": {
+        "8": "Nuggets (8-count)",
+        "12": "Nuggets (12-count)"
+    },
+    "grilled": {
+        "8": "Grilled Nuggets (8-count)",
+        "12": "Grilled Nuggets (12-count)"
+    }
+}
+
+# Update the HANDLED_INTENTS list at the top
+HANDLED_INTENTS = [
+    'OrderFood',
+    'OrderFood - size',
+    'SpecifySize',
+    'ModifyOrder',
+    'Yes',
+    'No',
+    'Default Welcome Intent',
+    'MenuInquiry',
+    'OrderCompletion',
+    'ReviewOrder',
+    'SandwichSpicyOrNot',
+    'SandwichSpicyOrNot - custom',
+    'OrderNuggets',
+    'NuggetType',
+    'NuggetCount'
+]
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -187,133 +218,85 @@ def webhook():
             f"Current orders before processing: {orders.get(session_id, [])}")
 
         # Print out all your handled intents for comparison
-        HANDLED_INTENTS = [
-            'OrderFood',
-            'OrderFood - size',
-            'SpecifySize',
-            'ModifyOrder',
-            'SandwichSpicyOrNot',
-            'SandwichSpicyOrNot - custom',
-            'SandwichSpicyOrNot - custom-2',
-            'ReviewOrder',
-            'OrderCompletion',
-            'ConfirmOrder',
-            'Default Welcome Intent',
-            'MenuQuery',
-            'Yes',
-            'No'
-        ]
         print(
             f"Is intent '{intent_name}' in handled intents? {intent_name in HANDLED_INTENTS}")
 
         if intent_name == 'OrderFood':
-            # Check if this is a price inquiry
-            if 'how much' in query_text.lower() or 'cost' in query_text.lower() or 'price' in query_text.lower():
-                # Extract the item they're asking about
-                food_items = parameters.get('FoodItem', [])
-                if food_items:
-                    item_name = food_items[0]  # Get the first item
-                    price = price_list.get(item_name)
-                    if price:
-                        # Set menu context for follow-up
-                        if session_id not in awaiting_menu_response:
-                            awaiting_menu_response[session_id] = {}
-                        awaiting_menu_response[session_id] = {
-                            'item': item_name,
-                            'asked_about': 'order'
-                        }
-                        return create_response(f"A {item_name} costs ${price:.2f}. Would you like to order one?")
-                    else:
-                        return create_response("I couldn't find the price for that item. Could you please specify the exact menu item?")
-            
-            # Continue with regular order processing
             food_items = parameters.get('FoodItem', [])
-            sizes = parameters.get('Size', '')
-            numbers = parameters.get('number', [])
+            default_size = parameters.get('Size', 'Medium')
             query = query_text.lower()
-
-            # Initialize order items if not exists
+            
             if session_id not in orders:
                 orders[session_id] = []
-
-            # Extract all quantities and items using regex
-            matches = re.findall(r'(\d+)\s+((?:small|medium|large|)\s*[a-zA-Z\s]+)(?:,|\s+and\s+|\s*$)', query)
-            
-            for quantity, item in matches:
-                quantity = int(quantity)
-                item = item.strip()
                 
-                # Handle drinks
-                if 'drink' in item:
-                    size = 'Small'
-                    if 'large' in item:
-                        size = 'Large'
-                    elif 'medium' in item:
-                        size = 'Medium'
-                    orders[session_id].append({
-                        'food_item': f"Soft Drink ({size})",
-                        'quantity': quantity
-                    })
-                    
-                # Handle fries
-                elif 'fries' in item:
-                    size = 'Small'
-                    if 'large' in item:
-                        size = 'Large'
-                    elif 'medium' in item:
-                        size = 'Medium'
-                    orders[session_id].append({
-                        'food_item': f"Waffle Potato Fries ({size})",
-                        'quantity': quantity
-                    })
-                    
-                # Handle chicken sandwiches
-                elif 'chicken sandwich' in item:
-                    sandwich_name = "Chicken Sandwich"
-                    if 'spicy' in item:
-                        if 'deluxe' in item:
-                            sandwich_name = "Spicy Deluxe Sandwich"
-                        else:
-                            sandwich_name = "Spicy Chicken Sandwich"
-                    elif 'grilled' in item:
-                        if 'club' in item:
-                            sandwich_name = "Grilled Chicken Club Sandwich"
-                        else:
-                            sandwich_name = "Grilled Chicken Sandwich"
-                    elif 'deluxe' in item:
-                        sandwich_name = "Deluxe Chicken Sandwich"
-                    
-                    orders[session_id].append({
-                        'food_item': sandwich_name,
-                        'quantity': quantity
-                    })
-                    
-                # Generic handler for other items (like salads)
-                else:
-                    # Remove plural 's' if present
-                    clean_item = item.rstrip('s')
-                    # Get the full menu item name
-                    full_item_name = get_full_item_name(clean_item)
-                    if full_item_name:
-                        orders[session_id].append({
-                            'food_item': full_item_name,
-                            'quantity': quantity
-                        })
-
-            # Create order summary
-            order_summary = []
-            for item in orders[session_id]:
-                order_summary.append(f"{item['quantity']} x {item['food_item']}")
-
-            # Set context for additional items
-            awaiting_more_items[session_id] = True
+            added_items = []
             
-            if order_summary:
-                response = "I've added to your order:\n" + "\n".join(order_summary)
-                response += "\nWould you like anything else?"
-                return create_response(response)
-            else:
-                return create_response("I couldn't understand the items you want to order. Could you please rephrase your order?")
+            # Split query into individual items and clean up
+            query = re.sub(r'^can i get |^can i have |^i want ', '', query)
+            query = query.replace(',', ' and ')
+            items = [item.strip() for item in query.split(' and ')]
+            
+            print(f"Processing items: {items}")
+            
+            # Process each item in the query
+            for item in items:
+                item_size = default_size  # Start with default size
+                item_quantity = 1     # Default quantity
+                original_item = item  # Keep original item text for reference
+                
+                # Extract quantity
+                quantity_match = re.match(r'^(\d+)', item)
+                if quantity_match:
+                    item_quantity = int(quantity_match.group(1))
+                    item = item[len(quantity_match.group(0)):].strip()
+                
+                # Extract size from the item text
+                size_match = re.search(r'(small|medium|large)', item, re.IGNORECASE)
+                if size_match:
+                    item_size = size_match.group(1).capitalize()
+                    item = item.replace(size_match.group(1), '').strip()
+                
+                print(f"Processing: {original_item} -> Quantity: {item_quantity}, Size: {item_size}")
+                
+                # Match item to menu items
+                matched_item = None
+                if 'fry' in item or 'fries' in item:
+                    matched_item = 'Waffle Fries'
+                    full_item_name = f"Waffle Potato Fries ({item_size})"
+                elif 'drink' in item or 'soda' in item or 'beverage' in item:
+                    matched_item = 'Soft Drink'
+                    full_item_name = f"Soft Drink ({item_size})"
+                elif 'milkshake' in item or 'shake' in item:
+                    matched_item = 'Milkshake'
+                    full_item_name = f"Milkshake ({item_size})"
+                elif 'lemonade' in item:
+                    matched_item = 'Lemonade'
+                    full_item_name = f"Lemonade ({item_size})"
+                elif 'tea' in item:
+                    matched_item = 'Iced Tea'
+                    full_item_name = f"Iced Tea ({item_size})"
+                else:
+                    # For non-size items, use the FoodItem from parameters
+                    for food_item in food_items:
+                        if food_item.lower() in item.lower():
+                            matched_item = food_item
+                            full_item_name = food_item
+                            break
+                
+                if matched_item:
+                    orders[session_id].append({
+                        'food_item': full_item_name,
+                        'quantity': item_quantity
+                    })
+                    added_items.append(f"{item_quantity} {full_item_name}" if item_quantity > 1 else full_item_name)
+                    print(f"Added item: {full_item_name} (Quantity: {item_quantity})")
+            
+            if added_items:
+                items_text = ", ".join(added_items)
+                awaiting_more_items[session_id] = True
+                return create_response(f"I've added {items_text} to your order. Would you like anything else?")
+            
+            return create_response("I didn't catch what food item you wanted. Could you please repeat that?")
 
         elif intent_name == 'OrderFood - size':
             size = parameters.get('size', '')
@@ -349,6 +332,16 @@ def webhook():
 
                 return create_response(f"I've added {quantity} {full_item_name} to your order. Would you like anything else?")
 
+        elif intent_name == 'OrderNuggets':
+            if session_id not in awaiting_menu_response:
+                awaiting_menu_response[session_id] = {}
+            
+            awaiting_menu_response[session_id] = {
+                'context': 'nugget_type',
+                'item': 'nuggets'
+            }
+            return create_response("Would you like regular or grilled nuggets?")
+
         elif intent_name == 'ModifyOrder':
             action = parameters.get('ModifyAction', '')
             item = parameters.get('FoodItem', '')
@@ -366,73 +359,33 @@ def webhook():
                 })
 
         elif intent_name == 'SandwichSpicyOrNot':
-            # Get the original query text that contains all items
-            query_text = query_result.get('queryText', '').lower()
-
-            # Initialize pending orders for this session
-            if session_id not in pending_orders:
-                pending_orders[session_id] = {'items': []}
-
-            # Parse additional items from the query
-            if 'fry' in query_text or 'fries' in query_text:
-                size = 'Medium'  # Default size or parse from query
-                if 'large' in query_text:
-                    size = 'Large'
-                elif 'small' in query_text:
-                    size = 'Small'
-                pending_orders[session_id]['items'].append({
-                    'food_item': f'Waffle Potato Fries ({size})',
-                    'quantity': 1
-                })
-
-            if 'drink' in query_text:
-                size = 'Medium'  # Default size or parse from query
-                if 'large' in query_text:
-                    size = 'Large'
-                elif 'small' in query_text:
-                    size = 'Small'
-                pending_orders[session_id]['items'].append({
-                    'food_item': f'Soft Drink ({size})',
-                    'quantity': 1
-                })
-
-            return create_response("Would you like your chicken sandwich original or spicy?")
+            if session_id not in awaiting_menu_response:
+                awaiting_menu_response[session_id] = {}
+            
+            awaiting_menu_response[session_id] = {
+                'context': 'sandwich_spicy',
+                'asked_about': 'spicy'
+            }
+            return create_response("Would you like your chicken sandwich spicy or regular?")
 
         elif intent_name == 'SandwichSpicyOrNot - custom':
-            # Add the spicy sandwich
+            response = query_text.lower()
             if session_id not in orders:
                 orders[session_id] = []
-
-            order_item = {
-                'food_item': 'Spicy Chicken Sandwich',
-                'quantity': 1
-            }
-            orders[session_id].append(order_item)
-
-            # Process any pending items
-            added_items = ['Spicy Chicken Sandwich']
-            if session_id in pending_orders and pending_orders[session_id].get('items'):
-                for item in pending_orders[session_id]['items']:
-                    orders[session_id].append(item)
-                    added_items.append(item['food_item'])
-
-                # Clear pending orders after processing
-                del pending_orders[session_id]
-
-                # Create response with all items
-                items_text = ", ".join(added_items)
-                return create_response(f"I've added {items_text} to your order. Would you like anything else?")
-
-            return create_response("I've added a Spicy Chicken Sandwich to your order. Would you like anything else?")
-
-        elif intent_name == 'SandwichSpicyOrNot - custom-2':
-            order_item = {
-                'food_item': 'Chicken Sandwich',
-                'quantity': 1
-            }
-            orders[session_id].append(order_item)
-            print(f"Added to order: {order_item}")
-            return create_response("Sure, I have added a Chicken Sandwich to your order.")
+                
+            if 'spicy' in response:
+                orders[session_id].append({
+                    'food_item': 'Spicy Chicken Sandwich',
+                    'quantity': 1
+                })
+            else:
+                orders[session_id].append({
+                    'food_item': 'Chicken Sandwich',
+                    'quantity': 1
+                })
+            
+            awaiting_more_items[session_id] = True
+            return create_response("I've added your sandwich to the order. Would you like anything else?")
 
         elif intent_name == 'ReviewOrder':
             order_items = orders.get(session_id, [])
@@ -669,37 +622,93 @@ def webhook():
 
         elif intent_name == 'No':
             if session_id in awaiting_more_items:
-                # They don't want to order anything else
+                # They don't want to order anything else, show order summary
                 awaiting_more_items.pop(session_id)
                 order_items = orders.get(session_id, [])
                 if not order_items:
                     return create_response("I don't see any items in your order. What would you like to order?")
-                    
-                # Show order summary and ask for confirmation
+                
+                # Create detailed order summary with prices
                 order_summary = ''
+                total = 0
                 for item in order_items:
                     quantity = item.get('quantity', 1)
                     food_item = item['food_item']
-                    order_summary += f"{quantity} x {food_item}\n"
+                    item_price = price_list.get(food_item, 0) * quantity
+                    total += item_price
+                    
+                    # Add modifications to summary if they exist
+                    if 'modifications' in item:
+                        mods = item['modifications']
+                        if mods.get('remove'):
+                            food_item += f" (no {', '.join(mods['remove'])})"
+                        if mods.get('add'):
+                            food_item += f" (extra {', '.join(mods['add'])})"
+                    order_summary += f"{quantity} x {food_item} - ${item_price:.2f}\n"
                 
-                total_price = calculate_total(order_items)
                 awaiting_order_confirmation[session_id] = True
-                return create_response(f"Here's your order summary:\n{order_summary}\nTotal: ${total_price:.2f}\nWould you like to confirm this order?")
+                return create_response(f"Here's your order summary:\n{order_summary}\nTotal: ${total:.2f}\nWould you like to confirm this order?")
             
             elif session_id in awaiting_menu_response:
                 menu_context = awaiting_menu_response[session_id]
-                item_name = menu_context['item']
-                # Clear the menu context since they're not interested in more info
-                awaiting_menu_response.pop(session_id)
-                return create_response("No problem! Would you like to know about any other menu items?")
+                if menu_context.get('context') == 'sandwich_spicy':
+                    # Handle spicy sandwich choice
+                    if session_id not in orders:
+                        orders[session_id] = []
+                    orders[session_id].append({
+                        'food_item': 'Chicken Sandwich',
+                        'quantity': 1
+                    })
+                    awaiting_menu_response.pop(session_id)
+                    awaiting_more_items[session_id] = True
+                    return create_response("I've added a regular Chicken Sandwich to your order. Would you like anything else?")
             
             elif session_id in awaiting_order_confirmation:
-                # They don't want to confirm their order yet
+                # They don't want to confirm their order
                 awaiting_order_confirmation.pop(session_id)
-                return create_response("What else would you like to add to your order?")
+                return create_response("What would you like to change about your order?")
             
-            # If we're not in any specific context
+            # Default no response
             return create_response("What would you like to order?")
+
+        elif intent_name == 'NuggetType':
+            nugget_type = query_text.lower()
+            if session_id not in awaiting_menu_response:
+                awaiting_menu_response[session_id] = {}
+            
+            print(f"Processing nugget type: {nugget_type}")
+            awaiting_menu_response[session_id] = {
+                'context': 'nugget_count',
+                'nugget_type': 'regular' if 'regular' in nugget_type else 'grilled'
+            }
+            return create_response("Would you like an 8-count or 12-count?")
+
+        elif intent_name == 'NuggetCount':
+            if session_id in awaiting_menu_response and awaiting_menu_response[session_id].get('context') == 'nugget_count':
+                count = '12' if '12' in query_text else '8'
+                nugget_type = awaiting_menu_response[session_id].get('nugget_type', 'regular')
+                
+                # Get the correct nugget item name
+                nugget_item = nugget_options[nugget_type][count]
+                
+                # Initialize orders if needed
+                if session_id not in orders:
+                    orders[session_id] = []
+                
+                # Add to orders
+                orders[session_id].append({
+                    'food_item': nugget_item,
+                    'quantity': 1
+                })
+                
+                # Clear nugget context and set awaiting more items
+                awaiting_menu_response.pop(session_id)
+                awaiting_more_items[session_id] = True
+                
+                print(f"Added nuggets to order: {nugget_item}")
+                return create_response(f"I've added {nugget_item} to your order. Would you like anything else?")
+            else:
+                return create_response("I'm not sure what type of nuggets you'd like. Would you like regular or grilled nuggets?")
 
         elif intent_name:  # If we have an intent name but didn't handle it
             print(f"WARNING: Unhandled intent: {intent_name}")
