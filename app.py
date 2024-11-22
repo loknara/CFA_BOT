@@ -10,6 +10,7 @@ from google.oauth2 import service_account
 import time
 
 
+# At the top of your file, after imports
 app = Flask(__name__)
 CORS(app)
 
@@ -21,7 +22,6 @@ def init_dialogflow():
     """Initialize Dialogflow client"""
     global dialogflow_client
     try:
-        # Check if we're in production (Heroku)
         if os.getenv('FLASK_ENV') == 'production':
             print("Loading production credentials from environment variable")
             credentials_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
@@ -33,16 +33,13 @@ def init_dialogflow():
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_dict)
         else:
-            # Local development
             print("Loading development credentials from file")
             credentials_path = 'credentials/service-account.json'
             credentials = service_account.Credentials.from_service_account_file(
                 credentials_path)
 
         # Initialize Dialogflow client
-        dialogflow_client = SessionsClient(credentials=credentials)
-        print("Successfully initialized Dialogflow client")
-        return dialogflow_client
+        return SessionsClient(credentials=credentials)
 
     except Exception as e:
         print(f"Error initializing credentials: {str(e)}")
@@ -51,6 +48,9 @@ def init_dialogflow():
 
 # Initialize Dialogflow at startup
 dialogflow_client = init_dialogflow()
+print(f"Dialogflow client initialized: {dialogflow_client is not None}")
+
+
 # Global storage for orders and pending orders
 orders = {}
 pending_orders = {}
@@ -680,51 +680,44 @@ def webhook():
 
 @app.route('/dialogflow', methods=['POST'])
 def dialogflow_webhook():
+    global dialogflow_client
     data = request.get_json()
 
-    # Use the existing dialogflow client from app
-    session_client = app.dialogflow_client
-
-    # Get or create a consistent session ID
+    # Use the global dialogflow_client directly
     session_id = data.get('sessionId', f"web-{int(time.time() * 1000)}")
-
-    # Create a session using the consistent ID
-    session = session_client.session_path('fast-food-chatbot', session_id)
+    session = dialogflow_client.session_path('fast-food-chatbot', session_id)
 
     # Create the text input
     text_input = TextInput(text=data['text'], language_code='en')
     query_input = QueryInput(text=text_input)
 
     try:
-        # Detect intent
-        response = session_client.detect_intent(
+        # Detect intent using the global client
+        response = dialogflow_client.detect_intent(
             request={'session': session, 'query_input': query_input}
         )
 
-        # Convert Protobuf message to dict more carefully
+        # Rest of your code remains the same
         query_result = response.query_result
 
-        # Handle parameters conversion
         def convert_value(value):
-            if hasattr(value, 'values'):  # For repeated fields (lists)
+            if hasattr(value, 'values'):
                 return [convert_value(v) for v in value.values]
-            elif hasattr(value, 'fields'):  # For struct fields (dict)
+            elif hasattr(value, 'fields'):
                 return {k: convert_value(v) for k, v in value.fields.items()}
-            elif hasattr(value, 'string_value'):  # For string values
+            elif hasattr(value, 'string_value'):
                 return value.string_value
-            elif hasattr(value, 'number_value'):  # For number values
+            elif hasattr(value, 'number_value'):
                 return value.number_value
-            elif hasattr(value, 'bool_value'):  # For boolean values
+            elif hasattr(value, 'bool_value'):
                 return value.bool_value
             else:
-                return str(value)  # Default to string conversion
+                return str(value)
 
-        # Convert parameters
         parameters = {}
         for key, value in query_result.parameters.items():
             parameters[key] = convert_value(value)
 
-        # Create response dictionary with only the necessary fields
         response_data = {
             'fulfillmentText': query_result.fulfillment_text,
             'intent': query_result.intent.display_name if query_result.intent else None,
