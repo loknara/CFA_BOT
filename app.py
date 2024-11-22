@@ -4,9 +4,36 @@ from flask_cors import CORS
 import os
 import json
 import re
+from google.cloud import dialogflow_v2
+from google.oauth2 import service_account
 
-app = Flask(__name__)
-CORS(app)
+def create_app():
+    app = Flask(__name__)
+    
+    # Enable CORS
+    CORS(app)
+    
+    # Load configuration
+    if os.getenv('FLASK_ENV') == 'production':
+        # For production: Use environment variables directly
+        credentials_dict = json.loads(os.getenv('GOOGLE_CREDENTIALS_JSON', '{}'))
+        credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+    else:
+        # For local development: Use .env file
+        credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        if credentials_path:
+            credentials = service_account.Credentials.from_service_account_file(credentials_path)
+        else:
+            credentials_dict = json.loads(os.getenv('GOOGLE_CREDENTIALS_JSON', '{}'))
+            credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+
+    # Initialize Dialogflow client with credentials
+    app.dialogflow_client = dialogflow_v2.SessionsClient(credentials=credentials)
+    
+    return app
+
+# Create the app instance
+app = create_app()
 
 # Global storage for orders and pending orders
 orders = {}
