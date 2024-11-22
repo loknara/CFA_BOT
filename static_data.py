@@ -125,6 +125,18 @@ price_list = {
 item_name_mapping = {
     "Waffle Fries": "Waffle Potato Fries",
     "Milkshake": "Milkshake",
+    'fries': 'Waffle Potato Fries',
+    'drink': 'Soft Drink',
+    'soda': 'Soft Drink',
+    'beverage': 'Soft Drink',
+    'spicy': 'Spicy Chicken Sandwich',
+    'sandwich': 'Chicken Sandwich',
+    'salad': 'Cobb Salad',
+    'cobb': 'Cobb Salad',
+    'shake': 'Milkshake',
+    'lemonade': 'Lemonade',
+    'tea': 'Iced Tea',
+    'nuggets': 'Chicken Nuggets'
     # Add other mappings as needed
 }
 
