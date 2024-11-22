@@ -30,6 +30,7 @@ def init_dialogflow():
                     "GOOGLE_CREDENTIALS_JSON environment variable not set")
 
             credentials_dict = json.loads(credentials_json)
+            print("Credentials loaded successfully")
             credentials = service_account.Credentials.from_service_account_info(
                 credentials_dict)
         else:
@@ -39,7 +40,9 @@ def init_dialogflow():
                 credentials_path)
 
         # Initialize Dialogflow client
-        return SessionsClient(credentials=credentials)
+        client = SessionsClient(credentials=credentials)
+        print("Dialogflow client initialized successfully")
+        return client
 
     except Exception as e:
         print(f"Error initializing credentials: {str(e)}")
@@ -681,23 +684,29 @@ def webhook():
 @app.route('/dialogflow', methods=['POST'])
 def dialogflow_webhook():
     global dialogflow_client
-    data = request.get_json()
-
-    # Use the global dialogflow_client directly
-    session_id = data.get('sessionId', f"web-{int(time.time() * 1000)}")
-    session = dialogflow_client.session_path('fast-food-chatbot', session_id)
-
-    # Create the text input
-    text_input = TextInput(text=data['text'], language_code='en')
-    query_input = QueryInput(text=text_input)
-
     try:
-        # Detect intent using the global client
+        data = request.get_json()
+
+        # Get or generate session ID
+        session_id = data.get('sessionId', f"web-{int(time.time() * 1000)}")
+
+        # Create the correct session path for Dialogflow ES
+        project_id = 'fast-food-chatbot'  # your project ID
+        session = f"projects/{project_id}/agent/sessions/{session_id}"
+
+        # Create the text input
+        text_input = TextInput(text=data['text'], language_code='en')
+        query_input = QueryInput(text=text_input)
+
+        # Detect intent
         response = dialogflow_client.detect_intent(
-            request={'session': session, 'query_input': query_input}
+            request={
+                'session': session,
+                'query_input': query_input
+            }
         )
 
-        # Rest of your code remains the same
+        # Process response
         query_result = response.query_result
 
         def convert_value(value):
@@ -714,10 +723,12 @@ def dialogflow_webhook():
             else:
                 return str(value)
 
+        # Extract parameters
         parameters = {}
         for key, value in query_result.parameters.items():
             parameters[key] = convert_value(value)
 
+        # Prepare response
         response_data = {
             'fulfillmentText': query_result.fulfillment_text,
             'intent': query_result.intent.display_name if query_result.intent else None,
