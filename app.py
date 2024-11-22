@@ -9,33 +9,39 @@ from google.cloud.dialogflow_v2.types import TextInput, QueryInput
 from google.oauth2 import service_account
 import time
 
+
 def create_app():
     app = Flask(__name__)
-    
+
     # Enable CORS
     CORS(app)
-    
+
+    # Load configuration
+    # Load configuration
     # Load configuration
     if os.getenv('FLASK_ENV') == 'production':
         # For production: Use environment variables directly
-        credentials_dict = json.loads(os.getenv('GOOGLE_CREDENTIALS_JSON', '{}'))
-        print("Loaded credentials keys:", credentials_dict.keys())  # Debug line
-        credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+        try:
+            credentials_dict = json.loads(
+                os.getenv('GOOGLE_CREDENTIALS_JSON', '{}'))
+            print("Production: Loading credentials from environment variable")
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_dict)
+        except Exception as e:
+            print(f"Error loading credentials: {str(e)}")
+            raise
     else:
-        # For local development: Use .env file
-        credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-        if credentials_path:
-            credentials = service_account.Credentials.from_service_account_file(credentials_path)
-        else:
-            with open('credentials/service-account.json', 'r') as f:
-                credentials_dict = json.load(f)
-            print("Loaded credentials keys:", credentials_dict.keys())  # Debug line
-            credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+        # For local development
+        credentials_path = 'credentials/service-account.json'
+        print(f"Development: Loading credentials from {credentials_path}")
+        credentials = service_account.Credentials.from_service_account_file(
+            credentials_path)
 
-    # Initialize Dialogflow client with credentials
-    app.dialogflow_client = SessionsClient(credentials=credentials)
-    
-    return app
+        # Initialize Dialogflow client with credentials
+        app.dialogflow_client = SessionsClient(credentials=credentials)
+
+        return app
+
 
 # Create the app instance
 app = create_app()
@@ -207,6 +213,8 @@ HANDLED_INTENTS = [
 ]
 
 # At the top of your file, add a helper function to extract a consistent session ID
+
+
 def get_consistent_session_id(session_path):
     """Extract a consistent session ID from the full session path"""
     try:
@@ -215,6 +223,7 @@ def get_consistent_session_id(session_path):
     except:
         # Fallback to a new session ID if parsing fails
         return f"web-{int(time.time() * 1000)}"
+
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -309,18 +318,19 @@ def webhook():
             # Create order summary
             order_summary = []
             for item in orders[session_id]:
-                order_summary.append(f"{item['quantity']} x {item['food_item']}")
+                order_summary.append(
+                    f"{item['quantity']} x {item['food_item']}")
 
             # Set context for additional items
             awaiting_more_items[session_id] = True
 
             if order_summary:
-                response = "I've added to your order:\n" + "\n".join(order_summary)
+                response = "I've added to your order:\n" + \
+                    "\n".join(order_summary)
                 response += "\nWould you like anything else?"
                 return create_response(response)
             else:
                 return create_response("I couldn't understand the items you want to order. Could you please rephrase your order?")
-
 
         elif intent_name == 'OrderFood - size':
             size = parameters.get('size', '')
@@ -359,7 +369,7 @@ def webhook():
         elif intent_name == 'OrderNuggets':
             if session_id not in awaiting_menu_response:
                 awaiting_menu_response[session_id] = {}
-            
+
             awaiting_menu_response[session_id] = {
                 'context': 'nugget_type',
                 'item': 'nuggets'
@@ -385,7 +395,7 @@ def webhook():
         elif intent_name == 'SandwichSpicyOrNot':
             if session_id not in awaiting_menu_response:
                 awaiting_menu_response[session_id] = {}
-            
+
             awaiting_menu_response[session_id] = {
                 'context': 'sandwich_spicy',
                 'asked_about': 'spicy'
@@ -396,7 +406,7 @@ def webhook():
             response = query_text.lower()
             if session_id not in orders:
                 orders[session_id] = []
-                
+
             if 'spicy' in response:
                 orders[session_id].append({
                     'food_item': 'Spicy Chicken Sandwich',
@@ -407,7 +417,7 @@ def webhook():
                     'food_item': 'Chicken Sandwich',
                     'quantity': 1
                 })
-            
+
             awaiting_more_items[session_id] = True
             return create_response("I've added your sandwich to the order. Would you like anything else?")
 
@@ -434,7 +444,7 @@ def webhook():
 
             # Mark this session as awaiting confirmation
             awaiting_order_confirmation[session_id] = True
-            
+
             order_summary = ''
             for item in order_items:
                 quantity = item.get('quantity', 1)
@@ -451,7 +461,7 @@ def webhook():
                 menu_context = awaiting_menu_response[session_id]
                 item_name = menu_context['item']
                 item = menu_items[item_name]
-                
+
                 if menu_context['asked_about'] == 'price':
                     # They asked about ingredients, now want price
                     awaiting_menu_response.pop(session_id)
@@ -460,7 +470,7 @@ def webhook():
                     # They asked about price, now want ingredients
                     awaiting_menu_response.pop(session_id)
                     return create_response(f"The {item_name} is made with {', '.join(item['ingredients'])}. Would you like to order one?")
-            
+
             # Only process order confirmation if we're actually awaiting one
             elif session_id in awaiting_order_confirmation:
                 order_items = orders.get(session_id, [])
@@ -476,11 +486,11 @@ def webhook():
                     order_summary += f"{quantity} x {food_item}\n"
 
                 total_price = calculate_total(order_items)
-                
+
                 # Clear the order and confirmation status after processing
                 orders[session_id] = []
                 awaiting_order_confirmation.pop(session_id, None)
-                
+
                 return create_response(f"Your order has been confirmed! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!")
             else:
                 return create_response("I'm not sure what you're confirming. Would you like to place an order?")
@@ -491,20 +501,20 @@ def webhook():
         elif intent_name == 'MenuQuery':
             menu_category = parameters.get('menucategory', '').lower()
             food_item = parameters.get('fooditem', '')
-            
+
             # If a specific item was asked about
             if food_item:
                 if food_item in menu_items:
                     ingredients = menu_items[food_item]['ingredients']
                     price = menu_items[food_item]['price']
-                    
+
                     awaiting_menu_response[session_id] = {
                         'item': food_item,
                         'asked_about': 'ingredients'
                     }
-                    
+
                     return create_response(f"{food_item} contains: {', '.join(ingredients)}. Would you like to know the price?")
-            
+
             # If a specific category was requested
             elif menu_category:
                 items = get_menu_items_by_category(menu_category)
@@ -513,7 +523,7 @@ def webhook():
                     return create_response(f"Here are our {menu_category} options: {items_text}")
                 else:
                     return create_response(f"I'm sorry, I don't have information about {menu_category}.")
-            
+
             # If no specific category or item was mentioned
             else:
                 categories = list(menu_items.keys())
@@ -536,18 +546,18 @@ def webhook():
                     order_summary += f"{quantity} x {food_item}\n"
 
                 total_price = calculate_total(order_items)
-                
+
                 # Clear the order and confirmation status after processing
                 orders[session_id] = []
                 awaiting_order_confirmation.pop(session_id)
-                
+
                 return create_response(f"Your order has been confirmed! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!")
-            
+
             # Handle other Yes responses (menu queries, etc.)
             elif session_id in awaiting_menu_response:
                 menu_context = awaiting_menu_response[session_id]
                 item_name = menu_context['item']
-                
+
                 if menu_context['asked_about'] == 'ingredients':
                     # They asked about ingredients, now want price
                     price = price_list.get(item_name, "price not available")
@@ -558,7 +568,7 @@ def webhook():
                         'asked_about': 'order'
                     }
                     return create_response(response)
-                
+
                 elif menu_context['asked_about'] == 'order':
                     # They want to order the item
                     if session_id not in orders:
@@ -567,8 +577,10 @@ def webhook():
                         'food_item': item_name,
                         'quantity': 1
                     })
-                    awaiting_menu_response.pop(session_id)  # Clear menu context
-                    awaiting_more_items[session_id] = True  # Set the new context
+                    awaiting_menu_response.pop(
+                        session_id)  # Clear menu context
+                    # Set the new context
+                    awaiting_more_items[session_id] = True
                     return create_response(f"I've added 1 {item_name} to your order. Would you like anything else?")
 
         elif intent_name == 'No':
@@ -578,17 +590,17 @@ def webhook():
                 order_items = orders.get(session_id, [])
                 if not order_items:
                     return create_response("I don't see any items in your order. Would you like to order something?")
-                    
+
                 # Generate order summary
                 order_summary = ''
                 for item in order_items:
                     quantity = item.get('quantity', 1)
                     food_item = item['food_item']
                     order_summary += f"{quantity} x {food_item}\n"
-                    
+
                 total_price = calculate_total(order_items)
                 awaiting_order_confirmation[session_id] = True
-                
+
                 return create_response(
                     f"Here's your order summary:\n{order_summary}\n"
                     f"Total: ${total_price:.2f}\n"
@@ -601,7 +613,7 @@ def webhook():
             nugget_type = query_text.lower()
             if session_id not in awaiting_menu_response:
                 awaiting_menu_response[session_id] = {}
-            
+
             print(f"Processing nugget type: {nugget_type}")
             awaiting_menu_response[session_id] = {
                 'context': 'nugget_count',
@@ -612,25 +624,26 @@ def webhook():
         elif intent_name == 'NuggetCount':
             if session_id in awaiting_menu_response and awaiting_menu_response[session_id].get('context') == 'nugget_count':
                 count = '12' if '12' in query_text else '8'
-                nugget_type = awaiting_menu_response[session_id].get('nugget_type', 'regular')
-                
+                nugget_type = awaiting_menu_response[session_id].get(
+                    'nugget_type', 'regular')
+
                 # Get the correct nugget item name
                 nugget_item = nugget_options[nugget_type][count]
-                
+
                 # Initialize orders if needed
                 if session_id not in orders:
                     orders[session_id] = []
-                
+
                 # Add to orders
                 orders[session_id].append({
                     'food_item': nugget_item,
                     'quantity': 1
                 })
-                
+
                 # Clear nugget context and set awaiting more items
                 awaiting_menu_response.pop(session_id)
                 awaiting_more_items[session_id] = True
-                
+
                 print(f"Added nuggets to order: {nugget_item}")
                 return create_response(f"I've added {nugget_item} to your order. Would you like anything else?")
             else:
@@ -662,29 +675,29 @@ def webhook():
 @app.route('/dialogflow', methods=['POST'])
 def dialogflow_webhook():
     data = request.get_json()
-    
+
     # Use the existing dialogflow client from app
     session_client = app.dialogflow_client
-    
+
     # Get or create a consistent session ID
     session_id = data.get('sessionId', f"web-{int(time.time() * 1000)}")
-    
+
     # Create a session using the consistent ID
     session = session_client.session_path('fast-food-chatbot', session_id)
-    
+
     # Create the text input
     text_input = TextInput(text=data['text'], language_code='en')
     query_input = QueryInput(text=text_input)
-    
+
     try:
         # Detect intent
         response = session_client.detect_intent(
             request={'session': session, 'query_input': query_input}
         )
-        
+
         # Convert Protobuf message to dict more carefully
         query_result = response.query_result
-        
+
         # Handle parameters conversion
         def convert_value(value):
             if hasattr(value, 'values'):  # For repeated fields (lists)
@@ -699,12 +712,12 @@ def dialogflow_webhook():
                 return value.bool_value
             else:
                 return str(value)  # Default to string conversion
-        
+
         # Convert parameters
         parameters = {}
         for key, value in query_result.parameters.items():
             parameters[key] = convert_value(value)
-        
+
         # Create response dictionary with only the necessary fields
         response_data = {
             'fulfillmentText': query_result.fulfillment_text,
@@ -712,9 +725,9 @@ def dialogflow_webhook():
             'parameters': parameters,
             'queryText': query_result.query_text
         }
-        
+
         return jsonify(response_data)
-        
+
     except Exception as e:
         print(f"Error in Dialogflow detection: {e}")
         import traceback
