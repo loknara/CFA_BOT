@@ -706,17 +706,20 @@ def dialogflow_webhook():
             request={'session': session_path, 'query_input': query_input}
         )
 
+        query_result = response.query_result
+
         # Create the webhook request format
         webhook_request = {
             'responseId': response.response_id,
             'session': session_id,
             'queryResult': {
-                'queryText': response.query_result.query_text,
-                'parameters': dict(response.query_result.parameters),
+                # Add the original query text
+                'queryText': data.get('text', ''),
+                'parameters': dict(query_result.parameters),
                 'intent': {
-                    'displayName': response.query_result.intent.display_name if response.query_result.intent else None,
+                    'displayName': query_result.intent.display_name if query_result.intent else None,
                 },
-                'fulfillmentText': response.query_result.fulfillment_text
+                'fulfillmentText': query_result.fulfillment_text
             }
         }
 
@@ -733,6 +736,14 @@ def dialogflow_webhook():
             webhook_data = webhook_response.get_json()
             print(f"Webhook response: {webhook_data}")
 
+            # If webhook_data is empty or None, use Dialogflow's response
+            if not webhook_data or not webhook_data.get('fulfillmentText'):
+                webhook_data = {
+                    'fulfillmentText': query_result.fulfillment_text or "I'm not sure how to respond to that.",
+                    'intent': query_result.intent.display_name if query_result.intent else None,
+                    'parameters': dict(query_result.parameters)
+                }
+
             # Return the webhook response to the frontend
             return jsonify(webhook_data)
 
@@ -740,7 +751,10 @@ def dialogflow_webhook():
         print(f"Error in Dialogflow detection: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'error': str(e),
+            'fulfillmentText': "I encountered an error. Could you please try again?"
+        }), 500
 
 
 @app.route('/')
