@@ -18,30 +18,33 @@ CORS(app)
 # Load configuration
 # Load configuration
 # Load configuration
-if os.getenv('FLASK_ENV') == 'production':
-    # For production: Use environment variables directly
-    try:
-        credentials_dict = json.loads(
-            os.getenv('GOOGLE_CREDENTIALS_JSON', '{}'))
-        print("Production: Loading credentials from environment variable")
+
+try:
+    # Check if we're in production (Heroku)
+    if os.getenv('FLASK_ENV') == 'production':
+        print("Loading production credentials from environment variable")
+        credentials_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+        if not credentials_json:
+            raise ValueError(
+                "GOOGLE_CREDENTIALS_JSON environment variable not set")
+
+        credentials_dict = json.loads(credentials_json)
         credentials = service_account.Credentials.from_service_account_info(
             credentials_dict)
-    except Exception as e:
-        print(f"Error loading credentials: {str(e)}")
-        raise
-else:
-    # For local development
-    credentials_path = 'credentials/service-account.json'
-    print(f"Development: Loading credentials from {credentials_path}")
-    credentials = service_account.Credentials.from_service_account_file(
-        credentials_path)
+    else:
+        # Local development
+        print("Loading development credentials from file")
+        credentials_path = 'credentials/service-account.json'
+        credentials = service_account.Credentials.from_service_account_file(
+            credentials_path)
 
-    # Initialize Dialogflow client with credentials
-    app.dialogflow_client = SessionsClient(credentials=credentials)
+    # Initialize Dialogflow client
+    dialogflow_client = SessionsClient(credentials=credentials)
+    print("Successfully initialized Dialogflow client")
 
-
-# Create the app instance
-dialogflow_client = SessionsClient(credentials=credentials)
+except Exception as e:
+    print(f"Error initializing credentials: {str(e)}")
+    raise
 
 # Global storage for orders and pending orders
 orders = {}
@@ -225,6 +228,7 @@ def get_consistent_session_id(session_path):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
+        request_data = request.get_json()
         print("\n=== WEBHOOK REQUEST ===")
         req = request.get_json(silent=True, force=True)
 
