@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Chick-fil-A Virtual Assistant</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap');
 
@@ -135,7 +136,7 @@
             background: white;
             border-radius: var(--radius-lg);
             box-shadow: var(--shadow-sm);
-            height: 70vh;
+            height: 78vh;
             display: flex;
             flex-direction: column;
         }
@@ -219,26 +220,28 @@
         }
 
         .menu-button {
-            display: block;
-            margin: 1.5rem auto;
-            padding: 1rem 2rem;
-            background: var(--cfa-red);
-            color: white;
-            border: none;
+            padding: 0.75rem 1.25rem;
+            background: white;
+            border: 2px solid var(--cfa-red);
             border-radius: var(--radius-lg);
+            color: var(--cfa-red);
             font-weight: 600;
             cursor: pointer;
-            transition: background-color 0.2s;
+            transition: all 0.2s;
+            font-size: 0.9rem;
             font-family: inherit;
         }
 
         .menu-button:hover {
-            background: var(--cfa-dark-red);
+            background: var(--cfa-red);
+            color: white;
+            transform: translateY(-2px);
         }
 
         .quick-actions {
             display: flex;
             justify-content: center;
+            height: 80px;
             gap: 0.75rem;
             padding: 0 1.5rem 1.5rem;
         }
@@ -288,6 +291,30 @@
                 flex: 1 1 100%;
             }
         }
+
+        #mic-button {
+            background: var(--cfa-light-gray);
+            border: 1px solid #ddd;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            padding: 0.5rem 0.8rem;
+            color: #333;
+            transition: all 0.2s;
+            margin-left: 0.2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #mic-button i {
+            font-size: 1.2rem;
+            color: #333;
+        }
+
+        #mic-button:hover {
+            background: #e8e8e8;
+            color: var(--cfa-red);
+        }
     </style>
 </head>
 <body>
@@ -310,15 +337,19 @@
                            placeholder="Ask me anything about Chick-fil-A..."
                            autocomplete="off">
                     <button id="send-button">Send</button>
+                    <button id="mic-button" title="Use voice input">
+                        <i class="fa-solid fa-microphone"></i>
+                    </button>
                 </div>
                 <div class="quick-actions">
                     <button class="quick-action-btn" data-message="what do you recommend">Recommendations</button>
                     <button class="quick-action-btn" data-message="check order">Check Order</button>
                     <button class="quick-action-btn" data-message="clear order">Clear Order</button>
                     <button class="quick-action-btn" data-message="Finish my order">Finalize Order</button>
+                    <button class="menu-button" onclick='window.open("{{ url_for("static", filename="menu.pdf") }}", "_blank")'>View Full Menu</button>
                 </div>
             </div>
-            <button class="menu-button" onclick='window.open("{{ url_for("static", filename="menu.pdf") }}", "_blank")'>View Full Menu</button>
+            
         </main>
 
         <aside class="side-panel">
@@ -422,6 +453,70 @@
                 userInput.focus();
             }
         }
+
+        // Voice recognition setup
+        const micButton = document.getElementById('mic-button');
+        let recognition = null;
+        let isListening = false;
+
+        // Check if browser supports speech recognition
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            recognition = new (window.webkitSpeechRecognition || window.SpeechRecognition)();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            // Recognition events
+            recognition.onstart = () => {
+                isListening = true;
+                micButton.classList.add('listening');
+                userInput.placeholder = 'Listening...';
+            };
+
+            recognition.onend = () => {
+                isListening = false;
+                micButton.classList.remove('listening');
+                userInput.placeholder = 'Ask me anything about Chick-fil-A...';
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                userInput.value = transcript;
+                sendMessage();
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                isListening = false;
+                micButton.classList.remove('listening');
+                userInput.placeholder = 'Ask me anything about Chick-fil-A...';
+                
+                if (event.error === 'not-allowed') {
+                    alert('Please allow microphone access to use voice input.');
+                }
+            };
+
+            // Mic button click handler
+            micButton.addEventListener('click', () => {
+                if (!isListening) {
+                    recognition.start();
+                } else {
+                    recognition.stop();
+                }
+            });
+        } else {
+            // Browser doesn't support speech recognition
+            micButton.style.display = 'none';
+            console.log('Speech recognition not supported');
+        }
+
+        // Update sendMessage function to handle mic button state
+        const originalSendMessage = sendMessage;
+        sendMessage = async function() {
+            micButton.disabled = true;
+            await originalSendMessage();
+            micButton.disabled = false;
+        };
     </script>
 </body>
 </html>
