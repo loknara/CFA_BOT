@@ -1312,7 +1312,7 @@ def process_webhook_request(req):
 def home():
     # Generate a unique session ID
     session_id = f"web-{int(time.time() * 1000)}"
-    return render_template('index.html', session_id=session_id)
+    return render_template('index1.html', session_id=session_id)
 
 # If you're using the Dialogflow API directly for your frontend, ensure you have the necessary setup.
 # The following code is optional and only required if you're making direct API calls from your frontend.

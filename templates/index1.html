@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chick-fil-A Virtual Assistant</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap');
+
+        :root {
+            --cfa-red: #e51636;
+            --cfa-dark-red: #c41230;
+            --cfa-light-gray: #f8f9fa;
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.1);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+            --radius-lg: 20px;
+            --radius-sm: 12px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Nunito', sans-serif;
+            background: #fafafa;
+            min-height: 100vh;
+        }
+
+        .top-banner {
+            background: var(--cfa-red);
+            padding: .5rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: var(--shadow-md);
+        }
+
+        .banner-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            padding: 0.5rem;
+        }
+
+        .logo {
+            width: 90px;
+            height: 90px;
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .logo img {
+            width: 100%;
+            height: auto;
+            object-fit: contain;
+        }
+
+        .banner-title {
+            color: white;
+            font-size: 1.75rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .main-container {
+            max-width: 1400px;
+            margin: 2rem auto;
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 2rem;
+            padding: 0 2rem;
+        }
+
+        .side-panel {
+            background: white;
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .panel-title {
+            color: var(--cfa-red);
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+
+        .menu-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+        }
+
+        .menu-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            transition: transform 0.2s;
+        }
+
+        .menu-item:hover {
+            transform: translateY(-4px);
+        }
+
+        .menu-item img {
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+            border-radius: var(--radius-sm);
+            margin-bottom: 0.5rem;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .menu-item-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 0.25rem;
+        }
+
+        .menu-item-price {
+            color: var(--cfa-red);
+            font-weight: 700;
+        }
+
+        #chat-container {
+            background: white;
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            height: 70vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #messages {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 1rem;
+            border-radius: var(--radius-sm);
+            line-height: 1.4;
+            animation: fadeIn 0.3s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .user-message {
+            background: var(--cfa-red);
+            color: white;
+            margin-left: auto;
+            border-radius: var(--radius-sm) var(--radius-sm) 0 var(--radius-sm);
+        }
+
+        .bot-message {
+            background: var(--cfa-light-gray);
+            margin-right: auto;
+            border-radius: 0 var(--radius-sm) var(--radius-sm) var(--radius-sm);
+        }
+
+        #input-container {
+            padding: 1.5rem;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 1rem;
+        }
+
+        #user-input {
+            flex-grow: 1;
+            padding: 1rem;
+            border: 2px solid #eee;
+            border-radius: var(--radius-lg);
+            font-size: 1rem;
+            transition: border-color 0.2s;
+            font-family: inherit;
+        }
+
+        #user-input:focus {
+            outline: none;
+            border-color: var(--cfa-red);
+        }
+
+        #send-button {
+            padding: 0.75rem 1.5rem;
+            background: var(--cfa-red);
+            color: white;
+            border: none;
+            border-radius: var(--radius-lg);
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            font-family: inherit;
+        }
+
+        #send-button:hover {
+            background: var(--cfa-dark-red);
+        }
+
+        #send-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .menu-button {
+            display: block;
+            margin: 1.5rem auto;
+            padding: 1rem 2rem;
+            background: var(--cfa-red);
+            color: white;
+            border: none;
+            border-radius: var(--radius-lg);
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            font-family: inherit;
+        }
+
+        .menu-button:hover {
+            background: var(--cfa-dark-red);
+        }
+
+        .quick-actions {
+            display: flex;
+            justify-content: center;
+            gap: 0.75rem;
+            padding: 0 1.5rem 1.5rem;
+        }
+
+        .quick-action-btn {
+            padding: 0.75rem 1.25rem;
+            background: white;
+            border: 2px solid var(--cfa-red);
+            border-radius: var(--radius-lg);
+            color: var(--cfa-red);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+            font-family: inherit;
+        }
+
+        .quick-action-btn:hover {
+            background: var(--cfa-red);
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        @media (max-width: 1200px) {
+            .main-container {
+                grid-template-columns: 1fr;
+                padding: 1rem;
+            }
+
+            .side-panel {
+                max-width: 600px;
+                margin: 0 auto;
+            }
+
+            .quick-actions {
+                flex-wrap: wrap;
+            }
+
+            .quick-action-btn {
+                flex: 1 1 calc(50% - 0.5rem);
+                text-align: center;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .quick-action-btn {
+                flex: 1 1 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="top-banner">
+        <div class="banner-content">
+            <div class="logo">
+                <img src="https://www.chick-fil-a.com/-/media/images/cfacom/default-images/chick-fil-a-logo-vector.ashx" alt="Chick-fil-A Logo">
+            </div>
+            <h1 class="banner-title">Virtual Assistant</h1>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <main>
+            <div id="chat-container">
+                <div id="messages"></div>
+                <div id="input-container">
+                    <input type="text" 
+                           id="user-input" 
+                           placeholder="Ask me anything about Chick-fil-A..."
+                           autocomplete="off">
+                    <button id="send-button">Send</button>
+                </div>
+                <div class="quick-actions">
+                    <button class="quick-action-btn" data-message="what do you recommend">Recommendations</button>
+                    <button class="quick-action-btn" data-message="check order">Check Order</button>
+                    <button class="quick-action-btn" data-message="clear order">Clear Order</button>
+                    <button class="quick-action-btn" data-message="Finish my order">Finalize Order</button>
+                </div>
+            </div>
+            <button class="menu-button" onclick='window.open("{{ url_for("static", filename="menu.pdf") }}", "_blank")'>View Full Menu</button>
+        </main>
+
+        <aside class="side-panel">
+            <h2 class="panel-title">Featured Menu Items</h2>
+            <div class="menu-grid">
+                <div class="menu-item">
+                    <img src="{{ url_for('static', filename='images/sandwich.webp') }}" alt="Original Chicken Sandwich">
+                    <div class="menu-item-name">Original Chicken Sandwich</div>
+                    <div class="menu-item-price">$4.99</div>
+                </div>
+                <div class="menu-item">
+                    <img src="{{ url_for('static', filename='images/nuggets.jpg') }}" alt="Chicken Nuggets">
+                    <div class="menu-item-name">8 ct Nuggets</div>
+                    <div class="menu-item-price">$4.45</div>
+                </div>
+                <div class="menu-item">
+                    <img src="{{ url_for('static', filename='images/waffle-fries.jpg') }}" alt="Waffle Fries">
+                    <div class="menu-item-name">Waffle Potato Fries</div>
+                    <div class="menu-item-price">$2.35</div>
+                </div>
+                <div class="menu-item">
+                    <img src="{{ url_for('static', filename='images/milkshake.png') }}" alt="Milkshake">
+                    <div class="menu-item-name">Cookies & Cream Milkshake</div>
+                    <div class="menu-item-price">$4.19</div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        const messagesDiv = document.getElementById('messages');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const sessionId = "{{ session_id }}";
+        const quickActionBtns = document.querySelectorAll('.quick-action-btn');
+
+        window.onload = function() {
+            appendMessage('bot-message', "Welcome to Chick-fil-A! I'm here to help you with your order. How can I assist you today?");
+        };
+
+        quickActionBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const message = this.dataset.message;
+                userInput.value = message;
+                sendMessage();
+            });
+        });
+
+        sendButton.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        function appendMessage(type, text) {
+            const message = document.createElement('div');
+            message.className = `message ${type}`;
+            
+            const paragraphs = text.split('\n');
+            paragraphs.forEach(paragraph => {
+                if (paragraph.trim()) {
+                    const p = document.createElement('p');
+                    p.innerText = paragraph;
+                    message.appendChild(p);
+                }
+            });
+            
+            messagesDiv.appendChild(message);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (text === '') return;
+            
+            appendMessage('user-message', text);
+            userInput.value = '';
+            userInput.disabled = true;
+            sendButton.disabled = true;
+
+            try {
+                const response = await fetch('/dialogflow', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        sessionId: sessionId
+                    })
+                });
+                
+                const data = await response.json();
+                appendMessage('bot-message', data.fulfillmentText || "I apologize, but I'm not sure how to respond to that. Can you please rephrase your question?");
+            } catch (error) {
+                appendMessage('bot-message', "I apologize, but I'm having trouble connecting right now. Please try again in a moment.");
+            } finally {
+                userInput.disabled = false;
+                sendButton.disabled = false;
+                userInput.focus();
+            }
+        }
+    </script>
+</body>
+</html>
