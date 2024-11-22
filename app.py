@@ -687,116 +687,60 @@ def dialogflow_webhook():
     try:
         # Get the initial request data
         data = request.get_json()
-        print(f"Received data: {data}")  # Debug log
+        print(f"Received data from frontend: {data}")
 
         # Get or generate session ID
-        session_id = data.get('sessionId')
-        if not session_id:
-            session_id = f"web-{int(time.time() * 1000)}"
+        session_id = data.get('sessionId', f"web-{int(time.time() * 1000)}")
 
-        # Create the session path for Dialogflow ES
+        # First, get the Dialogflow response
         project_id = 'fast-food-chatbot'
         session_path = dialogflow_client.session_path(project_id, session_id)
 
         # Create the Dialogflow request
-        request_data = {
-            'session': session_path,
-            'query_input': {
-                'text': {
-                    'text': data.get('text', ''),
-                    'language_code': 'en-US'
-                }
-            }
-        }
+        text_input = TextInput(text=data.get(
+            'text', ''), language_code='en-US')
+        query_input = QueryInput(text=text_input)
 
-        # First, get the Dialogflow response
-        response = dialogflow_client.detect_intent(request_data)
-        query_result = response.query_result
+        # Get response from Dialogflow
+        response = dialogflow_client.detect_intent(
+            request={'session': session_path, 'query_input': query_input}
+        )
 
-        # Now, create the webhook request data
-        webhook_data = {
+        # Create the webhook request format
+        webhook_request = {
             'responseId': response.response_id,
+            'session': session_id,
             'queryResult': {
-                'queryText': query_result.query_text,
-                'parameters': query_result.parameters,
+                'queryText': response.query_result.query_text,
+                'parameters': dict(response.query_result.parameters),
                 'intent': {
-                    'displayName': query_result.intent.display_name if query_result.intent else None,
+                    'displayName': response.query_result.intent.display_name if response.query_result.intent else None,
                 },
-                'fulfillmentText': query_result.fulfillment_text,
-            },
-            'session': session_id
+                'fulfillmentText': response.query_result.fulfillment_text
+            }
         }
 
-        # Process through webhook logic
-        webhook_response = process_webhook_request(webhook_data)
+        print(f"Sending to webhook: {webhook_request}")
 
-        # If webhook didn't provide a response, use Dialogflow's response
-        if not webhook_response.get('fulfillmentText'):
-            webhook_response = {
-                'fulfillmentText': query_result.fulfillment_text,
-                'intent': query_result.intent.display_name if query_result.intent else None,
-                'parameters': dict(query_result.parameters),
-                'queryText': query_result.query_text
-            }
+        # Call the webhook endpoint internally
+        with app.test_client() as client:
+            webhook_response = client.post(
+                '/webhook',
+                json=webhook_request,
+                content_type='application/json'
+            )
 
-        print(f"Sending response: {webhook_response}")  # Debug log
-        return jsonify(webhook_response)
+            webhook_data = webhook_response.get_json()
+            print(f"Webhook response: {webhook_data}")
+
+            # Return the webhook response to the frontend
+            return jsonify(webhook_data)
 
     except Exception as e:
         print(f"Error in Dialogflow detection: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
-
-def process_webhook_request(data):
-    """Process the webhook request and return appropriate response"""
-    try:
-        session_id = data.get('session')
-        intent_name = data.get('queryResult', {}).get(
-            'intent', {}).get('displayName')
-        parameters = data.get('queryResult', {}).get('parameters', {})
-
-        print(f"Processing webhook request for intent: {intent_name}")
-        print(f"Parameters: {parameters}")
-        print(f"Session ID: {session_id}")
-
-        # Your existing webhook logic here
-        # ... (keep all your intent handling logic)
-
-        if intent_name == "order.nuggets":
-            # Your nugget handling logic
-            if "nugget_type" in parameters:
-                nugget_type = parameters["nugget_type"]
-                nugget_item = f"{nugget_type} Nuggets"
-
-                if session_id not in orders:
-                    orders[session_id] = []
-
-                orders[session_id].append({
-                    'food_item': nugget_item,
-                    'quantity': 1
-                })
-
-                awaiting_menu_response.pop(session_id, None)
-                awaiting_more_items[session_id] = True
-
-                return {
-                    'fulfillmentText': f"I've added {nugget_item} to your order. Would you like anything else?"
-                }
-
-        # ... (rest of your intent handling logic)
-
-        return {
-            'fulfillmentText': "I'm processing your request. What would you like to order?"
-        }
-
-    except Exception as e:
-        print(f"Error in webhook processing: {str(e)}")
-        traceback.print_exc()
-        return {
-            'fulfillmentText': "I encountered an error processing your request. Could you please try again?"
-        }
 
 
 @app.route('/')
