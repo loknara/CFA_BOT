@@ -4,8 +4,10 @@ from flask_cors import CORS
 import os
 import json
 import re
-from google.cloud import dialogflow_v2
+from google.cloud.dialogflow_v2 import SessionsClient
+from google.cloud.dialogflow_v2.types import TextInput, QueryInput
 from google.oauth2 import service_account
+import time
 
 def create_app():
     app = Flask(__name__)
@@ -17,6 +19,7 @@ def create_app():
     if os.getenv('FLASK_ENV') == 'production':
         # For production: Use environment variables directly
         credentials_dict = json.loads(os.getenv('GOOGLE_CREDENTIALS_JSON', '{}'))
+        print("Loaded credentials keys:", credentials_dict.keys())  # Debug line
         credentials = service_account.Credentials.from_service_account_info(credentials_dict)
     else:
         # For local development: Use .env file
@@ -24,11 +27,13 @@ def create_app():
         if credentials_path:
             credentials = service_account.Credentials.from_service_account_file(credentials_path)
         else:
-            credentials_dict = json.loads(os.getenv('GOOGLE_CREDENTIALS_JSON', '{}'))
+            with open('credentials/service-account.json', 'r') as f:
+                credentials_dict = json.load(f)
+            print("Loaded credentials keys:", credentials_dict.keys())  # Debug line
             credentials = service_account.Credentials.from_service_account_info(credentials_dict)
 
     # Initialize Dialogflow client with credentials
-    app.dialogflow_client = dialogflow_v2.SessionsClient(credentials=credentials)
+    app.dialogflow_client = SessionsClient(credentials=credentials)
     
     return app
 
@@ -200,6 +205,16 @@ HANDLED_INTENTS = [
     'NuggetCount'
 ]
 
+# At the top of your file, add a helper function to extract a consistent session ID
+def get_consistent_session_id(session_path):
+    """Extract a consistent session ID from the full session path"""
+    try:
+        # Extract just the web-XXXXXXXXX portion
+        return session_path.split('/')[-1]
+    except:
+        # Fallback to a new session ID if parsing fails
+        return f"web-{int(time.time() * 1000)}"
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -226,8 +241,8 @@ def webhook():
             return jsonify({'fulfillmentText': "Invalid request format."})
 
         print("Raw Request:", json.dumps(req, indent=2))
-
-        session_id = req.get('session')
+        full_session = req.get('session', '')
+        session_id = get_consistent_session_id(req.get('session', ''))
         query_result = req.get('queryResult', {})
         intent_name = query_result.get('intent', {}).get('displayName')
         query_text = query_result.get('queryText', '').lower()
@@ -576,54 +591,29 @@ def webhook():
 
         elif intent_name == 'No':
             if session_id in awaiting_more_items:
-                # They don't want to order anything else, show order summary
+                # They don't want more items, proceed to order completion
                 awaiting_more_items.pop(session_id)
                 order_items = orders.get(session_id, [])
                 if not order_items:
-                    return create_response("I don't see any items in your order. What would you like to order?")
-                
-                # Create detailed order summary with prices
+                    return create_response("I don't see any items in your order. Would you like to order something?")
+                    
+                # Generate order summary
                 order_summary = ''
-                total = 0
                 for item in order_items:
                     quantity = item.get('quantity', 1)
                     food_item = item['food_item']
-                    item_price = price_list.get(food_item, 0) * quantity
-                    total += item_price
+                    order_summary += f"{quantity} x {food_item}\n"
                     
-                    # Add modifications to summary if they exist
-                    if 'modifications' in item:
-                        mods = item['modifications']
-                        if mods.get('remove'):
-                            food_item += f" (no {', '.join(mods['remove'])})"
-                        if mods.get('add'):
-                            food_item += f" (extra {', '.join(mods['add'])})"
-                    order_summary += f"{quantity} x {food_item} - ${item_price:.2f}\n"
-                
+                total_price = calculate_total(order_items)
                 awaiting_order_confirmation[session_id] = True
-                return create_response(f"Here's your order summary:\n{order_summary}\nTotal: ${total:.2f}\nWould you like to confirm this order?")
-            
-            elif session_id in awaiting_menu_response:
-                menu_context = awaiting_menu_response[session_id]
-                if menu_context.get('context') == 'sandwich_spicy':
-                    # Handle spicy sandwich choice
-                    if session_id not in orders:
-                        orders[session_id] = []
-                    orders[session_id].append({
-                        'food_item': 'Chicken Sandwich',
-                        'quantity': 1
-                    })
-                    awaiting_menu_response.pop(session_id)
-                    awaiting_more_items[session_id] = True
-                    return create_response("I've added a regular Chicken Sandwich to your order. Would you like anything else?")
-            
-            elif session_id in awaiting_order_confirmation:
-                # They don't want to confirm their order
-                awaiting_order_confirmation.pop(session_id)
-                return create_response("What would you like to change about your order?")
-            
-            # Default no response
-            return create_response("What would you like to order?")
+                
+                return create_response(
+                    f"Here's your order summary:\n{order_summary}\n"
+                    f"Total: ${total_price:.2f}\n"
+                    "Would you like to confirm this order?"
+                )
+            else:
+                return create_response("I'm not sure what you're saying no to. Would you like to place an order?")
 
         elif intent_name == 'NuggetType':
             nugget_type = query_text.lower()
@@ -687,9 +677,74 @@ def webhook():
         return create_response("I encountered an error processing your request. Could you please try again?")
 
 
+@app.route('/dialogflow', methods=['POST'])
+def dialogflow_webhook():
+    data = request.get_json()
+    
+    # Use the existing dialogflow client from app
+    session_client = app.dialogflow_client
+    
+    # Get or create a consistent session ID
+    session_id = data.get('sessionId', f"web-{int(time.time() * 1000)}")
+    
+    # Create a session using the consistent ID
+    session = session_client.session_path('fast-food-chatbot', session_id)
+    
+    # Create the text input
+    text_input = TextInput(text=data['text'], language_code='en')
+    query_input = QueryInput(text=text_input)
+    
+    try:
+        # Detect intent
+        response = session_client.detect_intent(
+            request={'session': session, 'query_input': query_input}
+        )
+        
+        # Convert Protobuf message to dict more carefully
+        query_result = response.query_result
+        
+        # Handle parameters conversion
+        def convert_value(value):
+            if hasattr(value, 'values'):  # For repeated fields (lists)
+                return [convert_value(v) for v in value.values]
+            elif hasattr(value, 'fields'):  # For struct fields (dict)
+                return {k: convert_value(v) for k, v in value.fields.items()}
+            elif hasattr(value, 'string_value'):  # For string values
+                return value.string_value
+            elif hasattr(value, 'number_value'):  # For number values
+                return value.number_value
+            elif hasattr(value, 'bool_value'):  # For boolean values
+                return value.bool_value
+            else:
+                return str(value)  # Default to string conversion
+        
+        # Convert parameters
+        parameters = {}
+        for key, value in query_result.parameters.items():
+            parameters[key] = convert_value(value)
+        
+        # Create response dictionary with only the necessary fields
+        response_data = {
+            'fulfillmentText': query_result.fulfillment_text,
+            'intent': query_result.intent.display_name if query_result.intent else None,
+            'parameters': parameters,
+            'queryText': query_result.query_text
+        }
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        print(f"Error in Dialogflow detection: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/')
-def index():
-    return render_template('index.html')
+def home():
+    # Generate a unique session ID
+    session_id = f"web-{int(time.time() * 1000)}"
+    return render_template('index.html', session_id=session_id)
 
 # If you're using the Dialogflow API directly for your frontend, ensure you have the necessary setup.
 # The following code is optional and only required if you're making direct API calls from your frontend.
