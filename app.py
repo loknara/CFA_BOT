@@ -10,41 +10,38 @@ from google.oauth2 import service_account
 import time
 
 
-def create_app():
-    app = Flask(__name__)
+app = Flask(__name__)
 
-    # Enable CORS
-    CORS(app)
+# Enable CORS
+CORS(app)
 
-    # Load configuration
-    # Load configuration
-    # Load configuration
-    if os.getenv('FLASK_ENV') == 'production':
-        # For production: Use environment variables directly
-        try:
-            credentials_dict = json.loads(
-                os.getenv('GOOGLE_CREDENTIALS_JSON', '{}'))
-            print("Production: Loading credentials from environment variable")
-            credentials = service_account.Credentials.from_service_account_info(
-                credentials_dict)
-        except Exception as e:
-            print(f"Error loading credentials: {str(e)}")
-            raise
-    else:
-        # For local development
-        credentials_path = 'credentials/service-account.json'
-        print(f"Development: Loading credentials from {credentials_path}")
-        credentials = service_account.Credentials.from_service_account_file(
-            credentials_path)
+# Load configuration
+# Load configuration
+# Load configuration
+if os.getenv('FLASK_ENV') == 'production':
+    # For production: Use environment variables directly
+    try:
+        credentials_dict = json.loads(
+            os.getenv('GOOGLE_CREDENTIALS_JSON', '{}'))
+        print("Production: Loading credentials from environment variable")
+        credentials = service_account.Credentials.from_service_account_info(
+            credentials_dict)
+    except Exception as e:
+        print(f"Error loading credentials: {str(e)}")
+        raise
+else:
+    # For local development
+    credentials_path = 'credentials/service-account.json'
+    print(f"Development: Loading credentials from {credentials_path}")
+    credentials = service_account.Credentials.from_service_account_file(
+        credentials_path)
 
-        # Initialize Dialogflow client with credentials
-        app.dialogflow_client = SessionsClient(credentials=credentials)
-
-        return app
+    # Initialize Dialogflow client with credentials
+    app.dialogflow_client = SessionsClient(credentials=credentials)
 
 
 # Create the app instance
-app = create_app()
+dialogflow_client = SessionsClient(credentials=credentials)
 
 # Global storage for orders and pending orders
 orders = {}
@@ -738,8 +735,8 @@ def dialogflow_webhook():
 @app.route('/')
 def home():
     # Generate a unique session ID
-    session_id = f"web-{int(time.time() * 1000)}"
-    return render_template('index.html', session_id=session_id)
+
+    return render_template('index.html')
 
 # If you're using the Dialogflow API directly for your frontend, ensure you have the necessary setup.
 # The following code is optional and only required if you're making direct API calls from your frontend.
