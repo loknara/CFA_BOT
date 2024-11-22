@@ -685,6 +685,7 @@ def webhook():
 def dialogflow_webhook():
     global dialogflow_client
     try:
+        # Get the initial request data
         data = request.get_json()
         print(f"Received data: {data}")  # Debug log
 
@@ -693,12 +694,11 @@ def dialogflow_webhook():
         if not session_id:
             session_id = f"web-{int(time.time() * 1000)}"
 
-        # Create the correct session path for Dialogflow ES
-        project_id = 'fast-food-chatbot'  # your project ID
+        # Create the session path for Dialogflow ES
+        project_id = 'fast-food-chatbot'
         session_path = dialogflow_client.session_path(project_id, session_id)
-        print(f"Session path: {session_path}")  # Debug log
 
-        # Create the properly formatted request
+        # Create the Dialogflow request
         request_data = {
             'session': session_path,
             'query_input': {
@@ -709,51 +709,94 @@ def dialogflow_webhook():
             }
         }
 
-        print(f"Sending request to Dialogflow: {request_data}")  # Debug log
-
-        # Detect intent with properly formatted request
+        # First, get the Dialogflow response
         response = dialogflow_client.detect_intent(request_data)
-
-        print("Received response from Dialogflow")  # Debug log
-
-        # Process response
         query_result = response.query_result
 
-        def convert_value(value):
-            if hasattr(value, 'values'):
-                return [convert_value(v) for v in value.values]
-            elif hasattr(value, 'fields'):
-                return {k: convert_value(v) for k, v in value.fields.items()}
-            elif hasattr(value, 'string_value'):
-                return value.string_value
-            elif hasattr(value, 'number_value'):
-                return value.number_value
-            elif hasattr(value, 'bool_value'):
-                return value.bool_value
-            else:
-                return str(value)
-
-        # Extract parameters
-        parameters = {}
-        for key, value in query_result.parameters.items():
-            parameters[key] = convert_value(value)
-
-        # Prepare response
-        response_data = {
-            'fulfillmentText': query_result.fulfillment_text,
-            'intent': query_result.intent.display_name if query_result.intent else None,
-            'parameters': parameters,
-            'queryText': query_result.query_text
+        # Now, create the webhook request data
+        webhook_data = {
+            'responseId': response.response_id,
+            'queryResult': {
+                'queryText': query_result.query_text,
+                'parameters': query_result.parameters,
+                'intent': {
+                    'displayName': query_result.intent.display_name if query_result.intent else None,
+                },
+                'fulfillmentText': query_result.fulfillment_text,
+            },
+            'session': session_id
         }
 
-        print(f"Sending response: {response_data}")  # Debug log
-        return jsonify(response_data)
+        # Process through webhook logic
+        webhook_response = process_webhook_request(webhook_data)
+
+        # If webhook didn't provide a response, use Dialogflow's response
+        if not webhook_response.get('fulfillmentText'):
+            webhook_response = {
+                'fulfillmentText': query_result.fulfillment_text,
+                'intent': query_result.intent.display_name if query_result.intent else None,
+                'parameters': dict(query_result.parameters),
+                'queryText': query_result.query_text
+            }
+
+        print(f"Sending response: {webhook_response}")  # Debug log
+        return jsonify(webhook_response)
 
     except Exception as e:
         print(f"Error in Dialogflow detection: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+def process_webhook_request(data):
+    """Process the webhook request and return appropriate response"""
+    try:
+        session_id = data.get('session')
+        intent_name = data.get('queryResult', {}).get(
+            'intent', {}).get('displayName')
+        parameters = data.get('queryResult', {}).get('parameters', {})
+
+        print(f"Processing webhook request for intent: {intent_name}")
+        print(f"Parameters: {parameters}")
+        print(f"Session ID: {session_id}")
+
+        # Your existing webhook logic here
+        # ... (keep all your intent handling logic)
+
+        if intent_name == "order.nuggets":
+            # Your nugget handling logic
+            if "nugget_type" in parameters:
+                nugget_type = parameters["nugget_type"]
+                nugget_item = f"{nugget_type} Nuggets"
+
+                if session_id not in orders:
+                    orders[session_id] = []
+
+                orders[session_id].append({
+                    'food_item': nugget_item,
+                    'quantity': 1
+                })
+
+                awaiting_menu_response.pop(session_id, None)
+                awaiting_more_items[session_id] = True
+
+                return {
+                    'fulfillmentText': f"I've added {nugget_item} to your order. Would you like anything else?"
+                }
+
+        # ... (rest of your intent handling logic)
+
+        return {
+            'fulfillmentText': "I'm processing your request. What would you like to order?"
+        }
+
+    except Exception as e:
+        print(f"Error in webhook processing: {str(e)}")
+        traceback.print_exc()
+        return {
+            'fulfillmentText': "I encountered an error processing your request. Could you please try again?"
+        }
 
 
 @app.route('/')
