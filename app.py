@@ -11,41 +11,46 @@ import time
 
 
 app = Flask(__name__)
-
-# Enable CORS
 CORS(app)
 
-# Load configuration
-# Load configuration
-# Load configuration
+# Global variables
+dialogflow_client = None
 
-try:
-    # Check if we're in production (Heroku)
-    if os.getenv('FLASK_ENV') == 'production':
-        print("Loading production credentials from environment variable")
-        credentials_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
-        if not credentials_json:
-            raise ValueError(
-                "GOOGLE_CREDENTIALS_JSON environment variable not set")
 
-        credentials_dict = json.loads(credentials_json)
-        credentials = service_account.Credentials.from_service_account_info(
-            credentials_dict)
-    else:
-        # Local development
-        print("Loading development credentials from file")
-        credentials_path = 'credentials/service-account.json'
-        credentials = service_account.Credentials.from_service_account_file(
-            credentials_path)
+def init_dialogflow():
+    """Initialize Dialogflow client"""
+    global dialogflow_client
+    try:
+        # Check if we're in production (Heroku)
+        if os.getenv('FLASK_ENV') == 'production':
+            print("Loading production credentials from environment variable")
+            credentials_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+            if not credentials_json:
+                raise ValueError(
+                    "GOOGLE_CREDENTIALS_JSON environment variable not set")
 
-    # Initialize Dialogflow client
-    dialogflow_client = SessionsClient(credentials=credentials)
-    print("Successfully initialized Dialogflow client")
+            credentials_dict = json.loads(credentials_json)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_dict)
+        else:
+            # Local development
+            print("Loading development credentials from file")
+            credentials_path = 'credentials/service-account.json'
+            credentials = service_account.Credentials.from_service_account_file(
+                credentials_path)
 
-except Exception as e:
-    print(f"Error initializing credentials: {str(e)}")
-    raise
+        # Initialize Dialogflow client
+        dialogflow_client = SessionsClient(credentials=credentials)
+        print("Successfully initialized Dialogflow client")
+        return dialogflow_client
 
+    except Exception as e:
+        print(f"Error initializing credentials: {str(e)}")
+        raise
+
+
+# Initialize Dialogflow at startup
+dialogflow_client = init_dialogflow()
 # Global storage for orders and pending orders
 orders = {}
 pending_orders = {}
