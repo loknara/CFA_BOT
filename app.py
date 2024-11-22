@@ -689,7 +689,9 @@ def dialogflow_webhook():
         print(f"Received data: {data}")  # Debug log
 
         # Get or generate session ID
-        session_id = data.get('sessionId', f"web-{int(time.time() * 1000)}")
+        session_id = data.get('sessionId')
+        if not session_id:
+            session_id = f"web-{int(time.time() * 1000)}"
 
         # Create the correct session path for Dialogflow ES
         project_id = 'fast-food-chatbot'  # your project ID
