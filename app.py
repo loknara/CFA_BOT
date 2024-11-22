@@ -14,6 +14,9 @@ import time
 app = Flask(__name__)
 CORS(app)
 
+# Initialize Dialogflow client at startup
+
+
 # Global variables
 dialogflow_client = None
 
@@ -50,7 +53,13 @@ def init_dialogflow():
 
 
 # Initialize Dialogflow at startup
-dialogflow_client = init_dialogflow()
+try:
+    dialogflow_client = init_dialogflow()
+    app.config['DIALOGFLOW_CLIENT'] = dialogflow_client
+    print(f"Dialogflow client initialized: {dialogflow_client is not None}")
+except Exception as e:
+    print(f"Error initializing Dialogflow client: {str(e)}")
+    app.config['DIALOGFLOW_CLIENT'] = None
 print(f"Dialogflow client initialized: {dialogflow_client is not None}")
 
 
@@ -792,17 +801,24 @@ def process_webhook(req):
 def handle_dialogflow():
     try:
         data = request.get_json(silent=True, force=True)
+        dialogflow_client = app.config['DIALOGFLOW_CLIENT']
+
+        if not dialogflow_client:
+            return jsonify({
+                'error': 'Dialogflow client not initialized',
+                'fulfillmentText': "Sorry, I'm having trouble connecting to my backend. Please try again later."
+            }), 500
 
         if 'sessionId' in data and 'text' in data:  # Direct text input
             session_id = data.get('sessionId')
             user_text = data.get('text')
 
-            session = app.dialogflow_client.session_path(
+            session = dialogflow_client.session_path(
                 'fast-food-chatbot', session_id)
             text_input = TextInput(text=user_text, language_code='en')
             query_input = QueryInput(text=text_input)
 
-            response = app.dialogflow_client.detect_intent(
+            response = dialogflow_client.detect_intent(
                 request={'session': session, 'query_input': query_input}
             )
 
