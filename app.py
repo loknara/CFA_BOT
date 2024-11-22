@@ -163,7 +163,7 @@ HANDLED_INTENTS = [
     'Yes',
     'No',
     'Default Welcome Intent',
-    'MenuInquiry',
+    'MenuQuery',
     'OrderCompletion',
     'ReviewOrder',
     'SandwichSpicyOrNot',
@@ -465,141 +465,43 @@ def webhook():
             return create_response("Welcome to Chick-fil-A! How can I help you today?")
 
         elif intent_name == 'MenuQuery':
-            category = parameters.get('menucategory', '').lower()
-            specific_item = parameters.get('fooditem', '')
-            query_text = query_result.get('queryText', '').lower()
-
-            # Clean up category input by removing articles
-            if category:
-                category = category.replace(
-                    'a ', '').replace('the ', '').strip()
-                # If category looks like a specific item, treat it as one
-                if 'sandwich' in category or 'fries' in category or 'drink' in category:
-                    specific_item = category
-                    category = ''
-
-            if specific_item:
-                # Clean up specific item input by removing articles
-                specific_item = specific_item.replace(
-                    'a ', '').replace('the ', '').strip()
-
-                # Handle size specification from query text
-                size_match = None
-                for size in ['small', 'medium', 'large']:
-                    if size in query_text:
-                        size_match = size.title()
-                        break
-
-                # Get full item name
-                base_item_name = get_full_item_name(specific_item)
-                if base_item_name:
-                    if size_match:
-                        full_item_name = f"{base_item_name} ({size_match})"
-                    elif base_item_name in size_required_items:
-                        # Default size
-                        full_item_name = f"{base_item_name} (Medium)"
-                    else:
-                        full_item_name = base_item_name
-
-                if full_item_name in menu_items:
-                    item = menu_items[full_item_name]
-                    ingredients = ', '.join(item['ingredients'])
-                    price = item['price']
-
-                    # Set the context based on what was asked
-                    if any(word in query_text for word in ['price', 'cost', 'how much', 'costs']):
-                        awaiting_menu_response[session_id] = {
-                            'item': full_item_name,
-                            'asked_about': 'ingredients'  # They asked about price, might want ingredients next
-                        }
-                        response = f"A {full_item_name} costs ${price:.2f}. Would you like to know about the ingredients?"
-                    elif 'ingredient' in query_text or 'what' in query_text:
-                        awaiting_menu_response[session_id] = {
-                            'item': full_item_name,
-                            'asked_about': 'price'  # They asked about ingredients, might want price next
-                        }
-                        response = f"Our {full_item_name} is made with {ingredients}. Would you like to know the price?"
-                    else:
-                        awaiting_menu_response[session_id] = {
-                            'item': full_item_name,
-                            'asked_about': 'order'  # They might want to order
-                        }
-                        response = f"Our {full_item_name} is made with {ingredients} and costs ${price:.2f}. Would you like to try it?"
-                    return create_response(response)
-
-                # If no exact match found, try partial matches
-                matching_items = [item for item in menu_items.keys()
-                                  if specific_item.lower() in item.lower()]
-                if matching_items:
-                    response = f"Let me tell you about our {specific_item} options:\n\n"
-                    for item_name in matching_items:
-                        item = menu_items[item_name]
-                        ingredients = ', '.join(item['ingredients'])
-                        price = item['price']
-                        response += f"• {item_name} (${price:.2f}): Made with {ingredients}\n"
-                    response += "\nWould you like to know more about any of these items?"
-                    return create_response(response.strip())
-
-                return create_response(f"I apologize, but I couldn't find any menu items matching '{specific_item}'. Would you like me to tell you about our similar items?")
-
-            elif category:
-                # Search by category
-                items = get_menu_items_by_category(category)
+            menu_category = parameters.get('menucategory', '').lower()
+            food_item = parameters.get('fooditem', '')
+            
+            # If a specific item was asked about
+            if food_item:
+                if food_item in menu_items:
+                    ingredients = menu_items[food_item]['ingredients']
+                    price = menu_items[food_item]['price']
+                    
+                    awaiting_menu_response[session_id] = {
+                        'item': food_item,
+                        'asked_about': 'ingredients'
+                    }
+                    
+                    return create_response(f"{food_item} contains: {', '.join(ingredients)}. Would you like to know the price?")
+            
+            # If a specific category was requested
+            elif menu_category:
+                items = get_menu_items_by_category(menu_category)
                 if items:
-                    response = f"Here are our {category}:\n\n"
-                    for item in items:
-                        details = format_menu_item_details(item)
-                        if details:
-                            response += f"{details}\n\n"
-                    return create_response(response.strip())
-                return create_response(f"I'm sorry, I couldn't find any items in the '{category}' category.")
-
-            # No category or item specified
-            return create_response("I can tell you about our menu items. Please specify a category (like sandwiches, salads, drinks) or ask about a specific item!")
+                    items_text = ", ".join(items)
+                    return create_response(f"Here are our {menu_category} options: {items_text}")
+                else:
+                    return create_response(f"I'm sorry, I don't have information about {menu_category}.")
+            
+            # If no specific category or item was mentioned
+            else:
+                categories = list(menu_items.keys())
+                categories_text = ", ".join(categories)
+                return create_response(f"We have several menu categories: {categories_text}. Which would you like to know more about?")
 
         elif intent_name == 'Yes':
-            if session_id in awaiting_menu_response:
-                menu_context = awaiting_menu_response[session_id]
-                item_name = menu_context['item']
-                item = menu_items[item_name]
-                
-                if menu_context['asked_about'] == 'price':
-                    # They asked about ingredients, now want price
-                    response = f"The {item_name} costs ${item['price']:.2f}. Would you like to order one?"
-                    # Update context to order
-                    awaiting_menu_response[session_id] = {
-                        'item': item_name,
-                        'asked_about': 'order'
-                    }
-                    return create_response(response)
-                    
-                elif menu_context['asked_about'] == 'ingredients':
-                    # They asked about price, now want ingredients
-                    response = f"The {item_name} is made with {', '.join(item['ingredients'])}. Would you like to order one?"
-                    # Update context to order
-                    awaiting_menu_response[session_id] = {
-                        'item': item_name,
-                        'asked_about': 'order'
-                    }
-                    return create_response(response)
-                    
-                elif menu_context['asked_about'] == 'order':
-                    # They want to order the item
-                    if session_id not in orders:
-                        orders[session_id] = []
-                    orders[session_id].append({
-                        'food_item': item_name,
-                        'quantity': 1
-                    })
-                    awaiting_menu_response.pop(session_id)  # Clear menu context
-                    awaiting_more_items[session_id] = True  # Set the new context
-                    return create_response(f"I've added 1 {item_name} to your order. Would you like anything else?")
-            
-            # If we're awaiting order confirmation, process that
-            elif session_id in awaiting_order_confirmation:
+            # Check if we're awaiting order confirmation
+            if session_id in awaiting_order_confirmation:
                 order_items = orders.get(session_id, [])
                 if not order_items:
-                    awaiting_order_confirmation.pop(session_id, None)
+                    awaiting_order_confirmation.pop(session_id)
                     return create_response("It seems you haven't ordered anything yet. What would you like to order?")
 
                 # Process the confirmation
@@ -613,12 +515,37 @@ def webhook():
                 
                 # Clear the order and confirmation status after processing
                 orders[session_id] = []
-                awaiting_order_confirmation.pop(session_id, None)
+                awaiting_order_confirmation.pop(session_id)
                 
                 return create_response(f"Your order has been confirmed! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!")
-
-            # Default response if no context
-            return create_response("I'm not sure what you're saying yes to. How can I help you?")
+            
+            # Handle other Yes responses (menu queries, etc.)
+            elif session_id in awaiting_menu_response:
+                menu_context = awaiting_menu_response[session_id]
+                item_name = menu_context['item']
+                
+                if menu_context['asked_about'] == 'ingredients':
+                    # They asked about ingredients, now want price
+                    price = price_list.get(item_name, "price not available")
+                    response = f"The {item_name} costs ${price:.2f}. Would you like to order one?"
+                    # Update context to order
+                    awaiting_menu_response[session_id] = {
+                        'item': item_name,
+                        'asked_about': 'order'
+                    }
+                    return create_response(response)
+                
+                elif menu_context['asked_about'] == 'order':
+                    # They want to order the item
+                    if session_id not in orders:
+                        orders[session_id] = []
+                    orders[session_id].append({
+                        'food_item': item_name,
+                        'quantity': 1
+                    })
+                    awaiting_menu_response.pop(session_id)  # Clear menu context
+                    awaiting_more_items[session_id] = True  # Set the new context
+                    return create_response(f"I've added 1 {item_name} to your order. Would you like anything else?")
 
         elif intent_name == 'No':
             if session_id in awaiting_more_items:
