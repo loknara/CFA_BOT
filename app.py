@@ -9,36 +9,50 @@ from google.cloud.dialogflow_v2.types import TextInput, QueryInput
 from google.oauth2 import service_account
 import time
 
-def create_app():
-    app = Flask(__name__)
-    
-    # Enable CORS
-    CORS(app)
-    
-    # Load configuration
-    if os.getenv('FLASK_ENV') == 'production':
-        # For production: Use environment variables directly
-        credentials_dict = json.loads(os.getenv('GOOGLE_CREDENTIALS_JSON', '{}'))
-        print("Loaded credentials keys:", credentials_dict.keys())  # Debug line
-        credentials = service_account.Credentials.from_service_account_info(credentials_dict)
-    else:
-        # For local development: Use .env file
-        credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-        if credentials_path:
-            credentials = service_account.Credentials.from_service_account_file(credentials_path)
+
+# At the top of your file, after imports
+app = Flask(__name__)
+CORS(app)
+
+# Global variables
+dialogflow_client = None
+
+
+def init_dialogflow():
+    """Initialize Dialogflow client"""
+    global dialogflow_client
+    try:
+        if os.getenv('FLASK_ENV') == 'production':
+            print("Loading production credentials from environment variable")
+            credentials_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+            if not credentials_json:
+                raise ValueError(
+                    "GOOGLE_CREDENTIALS_JSON environment variable not set")
+
+            credentials_dict = json.loads(credentials_json)
+            print("Credentials loaded successfully")
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_dict)
         else:
-            with open('credentials/service-account.json', 'r') as f:
-                credentials_dict = json.load(f)
-            print("Loaded credentials keys:", credentials_dict.keys())  # Debug line
-            credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+            print("Loading development credentials from file")
+            credentials_path = 'credentials/service-account.json'
+            credentials = service_account.Credentials.from_service_account_file(
+                credentials_path)
 
-    # Initialize Dialogflow client with credentials
-    app.dialogflow_client = SessionsClient(credentials=credentials)
-    
-    return app
+        # Initialize Dialogflow client
+        client = SessionsClient(credentials=credentials)
+        print("Dialogflow client initialized successfully")
+        return client
 
-# Create the app instance
-app = create_app()
+    except Exception as e:
+        print(f"Error initializing credentials: {str(e)}")
+        raise
+
+
+# Initialize Dialogflow at startup
+dialogflow_client = init_dialogflow()
+print(f"Dialogflow client initialized: {dialogflow_client is not None}")
+
 
 # Global storage for orders and pending orders
 orders = {}
@@ -82,6 +96,19 @@ item_modifications = {
 }
 
 # Add this helper function for quantity parsing
+
+
+def create_response_message(message):
+    return {
+        'fulfillmentText': message,
+        'fulfillmentMessages': [
+            {
+                'text': {
+                    'text': [message]
+                }
+            }
+        ]
+    }
 
 
 def parse_quantity(text):
@@ -207,6 +234,8 @@ HANDLED_INTENTS = [
 ]
 
 # At the top of your file, add a helper function to extract a consistent session ID
+
+
 def get_consistent_session_id(session_path):
     """Extract a consistent session ID from the full session path"""
     try:
@@ -216,130 +245,107 @@ def get_consistent_session_id(session_path):
         # Fallback to a new session ID if parsing fails
         return f"web-{int(time.time() * 1000)}"
 
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    req = request.get_json()
+    response_data = process_webhook(req)
+    return jsonify(response_data)
+
+
+def process_webhook(req):
     try:
         print("\n=== WEBHOOK REQUEST ===")
-        req = request.get_json(silent=True, force=True)
-
-        # Detailed debug logging
-        query_result = req.get('queryResult', {})
-        intent = query_result.get('intent', {})
-
-        print("Intent Data:", {
-            'displayName': intent.get('displayName'),
-            'parameters': query_result.get('parameters'),
-            'queryText': query_result.get('queryText'),
-            'fulfillmentText': query_result.get('fulfillmentText')
-        })
-
-        # Check if intent names match exactly
-        intent_name = intent.get('displayName')
-        print(f"Received intent: '{intent_name}'")
-        print(f"Intent type: {type(intent_name)}")  # Check if it's a string
 
         if req is None:
-            return jsonify({'fulfillmentText': "Invalid request format."})
+            return {'fulfillmentText': "Invalid request format."}
 
-        print("Raw Request:", json.dumps(req, indent=2))
-        full_session = req.get('session', '')
-        session_id = get_consistent_session_id(req.get('session', ''))
+        # Extract required data from req
         query_result = req.get('queryResult', {})
-        intent_name = query_result.get('intent', {}).get('displayName')
+        intent = query_result.get('intent', {})
+        intent_name = intent.get('displayName', '')
         query_text = query_result.get('queryText', '').lower()
         parameters = query_result.get('parameters', {})
+        full_session = req.get('session', '')
+        session_id = get_consistent_session_id(full_session)
 
-        # Initialize orders if needed
-        if session_id not in orders:
-            orders[session_id] = []
+        # Detailed debug logging
+        print("Intent Data:", {
+            'displayName': intent_name,
+            'parameters': parameters,
+            'queryText': query_text,
+            'fulfillmentText': query_result.get('fulfillmentText', '')
+        })
 
+        print("Raw Request:", json.dumps(req, indent=2))
         print(f"Session ID: {session_id}")
         print(f"Received intent: {intent_name}")
         print(f"Query Text: {query_text}")
         print(f"Parameters: {parameters}")
         print(
             f"Current orders before processing: {orders.get(session_id, [])}")
-
-        # Print out all your handled intents for comparison
         print(
             f"Is intent '{intent_name}' in handled intents? {intent_name in HANDLED_INTENTS}")
 
+        # Initialize orders if needed
+        if session_id not in orders:
+            orders[session_id] = []
+
         if intent_name == 'OrderFood':
             food_items = parameters.get('FoodItem', [])
-            default_size = parameters.get('Size', 'Medium')
+            sizes = parameters.get('Size', [])
+            numbers = parameters.get('number', [])
             query = query_text.lower()
-            
-            if session_id not in orders:
-                orders[session_id] = []
-                
-            added_items = []
-            
-            # Split query into individual items and clean up
-            query = re.sub(r'^can i get |^can i have |^i want ', '', query)
-            query = query.replace(',', ' and ')
-            items = [item.strip() for item in query.split(' and ')]
-            
-            print(f"Processing items: {items}")
-            
-            # Process each item in the query
-            for item in items:
-                item_size = default_size  # Start with default size
-                item_quantity = 1     # Default quantity
-                original_item = item  # Keep original item text for reference
-                
-                # Extract quantity
-                quantity_match = re.match(r'^(\d+)', item)
-                if quantity_match:
-                    item_quantity = int(quantity_match.group(1))
-                    item = item[len(quantity_match.group(0)):].strip()
-                
-                # Extract size from the item text
-                size_match = re.search(r'(small|medium|large)', item, re.IGNORECASE)
-                if size_match:
-                    item_size = size_match.group(1).capitalize()
-                    item = item.replace(size_match.group(1), '').strip()
-                
-                print(f"Processing: {original_item} -> Quantity: {item_quantity}, Size: {item_size}")
-                
-                # Match item to menu items
-                matched_item = None
-                if 'fry' in item or 'fries' in item:
-                    matched_item = 'Waffle Fries'
-                    full_item_name = f"Waffle Potato Fries ({item_size})"
-                elif 'drink' in item or 'soda' in item or 'beverage' in item:
-                    matched_item = 'Soft Drink'
-                    full_item_name = f"Soft Drink ({item_size})"
-                elif 'milkshake' in item or 'shake' in item:
-                    matched_item = 'Milkshake'
-                    full_item_name = f"Milkshake ({item_size})"
-                elif 'lemonade' in item:
-                    matched_item = 'Lemonade'
-                    full_item_name = f"Lemonade ({item_size})"
-                elif 'tea' in item:
-                    matched_item = 'Iced Tea'
-                    full_item_name = f"Iced Tea ({item_size})"
+
+            # Initialize index for sizes
+            size_idx = 0
+
+            for idx, food_item in enumerate(food_items):
+                # Map the food item name to the menu item
+                mapped_item = item_name_mapping.get(food_item, food_item)
+
+                # Determine quantity
+                if idx < len(numbers) and numbers[idx]:
+                    quantity = int(numbers[idx])
                 else:
-                    # For non-size items, use the FoodItem from parameters
-                    for food_item in food_items:
-                        if food_item.lower() in item.lower():
-                            matched_item = food_item
-                            full_item_name = food_item
-                            break
-                
-                if matched_item:
-                    orders[session_id].append({
-                        'food_item': full_item_name,
-                        'quantity': item_quantity
-                    })
-                    added_items.append(f"{item_quantity} {full_item_name}" if item_quantity > 1 else full_item_name)
-                    print(f"Added item: {full_item_name} (Quantity: {item_quantity})")
-            
-            if added_items:
-                items_text = ", ".join(added_items)
-                awaiting_more_items[session_id] = True
-                return create_response(f"I've added {items_text} to your order. Would you like anything else?")
-            
-            return create_response("I didn't catch what food item you wanted. Could you please repeat that?")
+                    quantity = 1  # Default quantity
+
+                # Determine if the item requires a size
+                if mapped_item in size_required_items:
+                    if size_idx < len(sizes):
+                        size = sizes[size_idx]
+                        size_idx += 1  # Move to the next size for subsequent items
+                    else:
+                        size = 'Medium'  # Default size
+                    full_item_name = f"{mapped_item} ({size})"
+                else:
+                    full_item_name = mapped_item
+
+                # Add the item to the order
+                order_item = {
+                    'food_item': full_item_name,
+                    'quantity': quantity
+                }
+                orders[session_id].append(order_item)
+                print(f"Added item: {full_item_name} (Quantity: {quantity})")
+
+            # Create order summary
+            order_summary = []
+            for item in orders[session_id]:
+                order_summary.append(
+                    f"{item['quantity']} x {item['food_item']}")
+
+            # Set context for additional items
+            awaiting_more_items[session_id] = True
+
+            if order_summary:
+                response_message = "I've added to your order:\n" + \
+                    "\n".join(order_summary)
+                response_message += "\nWould you like anything else?"
+            else:
+                response_message = "I couldn't understand the items you want to order. Could you please rephrase your order?"
+
+            return create_response_message(response_message)
 
         elif intent_name == 'OrderFood - size':
             size = parameters.get('size', '')
@@ -356,7 +362,8 @@ def webhook():
                 orders[session_id].append(order_item)
                 del last_ordered_item[session_id]
 
-                return create_response(f"I've added {quantity} {full_item_name} to your order. Would you like anything else?")
+                response_message = f"I've added {quantity} {full_item_name} to your order. Would you like anything else?"
+                return create_response_message(response_message)
 
         elif intent_name == 'SpecifySize':
             size = parameters.get('Size', '')
@@ -373,17 +380,19 @@ def webhook():
                 orders[session_id].append(order_item)
                 del last_ordered_item[session_id]
 
-                return create_response(f"I've added {quantity} {full_item_name} to your order. Would you like anything else?")
+                response_message = f"I've added {quantity} {full_item_name} to your order. Would you like anything else?"
+                return create_response_message(response_message)
 
         elif intent_name == 'OrderNuggets':
             if session_id not in awaiting_menu_response:
                 awaiting_menu_response[session_id] = {}
-            
+
             awaiting_menu_response[session_id] = {
                 'context': 'nugget_type',
                 'item': 'nuggets'
             }
-            return create_response("Would you like regular or grilled nuggets?")
+            response_message = "Would you like regular or grilled nuggets?"
+            return create_response_message(response_message)
 
         elif intent_name == 'ModifyOrder':
             print("Processing ModifyOrder intent...")
@@ -392,45 +401,50 @@ def webhook():
             items_to_remove = parameters.get('ItemsToRemove', '')
             items_to_add = parameters.get('ItemsToAdd', [])
             food_items = parameters.get('FoodItem', [])
-            
-            print(f"Debug - Actions: {actions}, Remove: {items_to_remove}, Add: {items_to_add}, FoodItems: {food_items}")
-            
+
+            print(
+                f"Debug - Actions: {actions}, Remove: {items_to_remove}, Add: {items_to_add}, FoodItems: {food_items}")
+
             # If we have a remove action and FoodItem but no ItemsToRemove, use FoodItem
             if 'remove' in actions and food_items and not items_to_remove:
                 items_to_remove = food_items
-            
+
             # Ensure lists
-            items_to_remove = [items_to_remove] if isinstance(items_to_remove, str) else items_to_remove
-            items_to_add = [items_to_add] if isinstance(items_to_add, str) else items_to_add
-            
+            items_to_remove = [items_to_remove] if isinstance(
+                items_to_remove, str) else items_to_remove
+            items_to_add = [items_to_add] if isinstance(
+                items_to_add, str) else items_to_add
+
             print(f"Debug - Final items to remove: {items_to_remove}")
             print(f"Debug - Final items to add: {items_to_add}")
-            
+
             # Handle removals
             if 'remove' in actions and items_to_remove:
                 original_order = orders[session_id].copy()
                 orders[session_id] = []
                 items_removed = []
-                
+
                 for order_item in original_order:
                     should_keep = True
                     for item_to_remove in items_to_remove:
                         if isinstance(item_to_remove, str) and item_to_remove.strip():
                             remove_name = item_to_remove.lower().strip()
-                            order_name = order_item['food_item'].lower().strip()
-                            
-                            print(f"Debug - Comparing: '{remove_name}' with '{order_name}'")
-                            
+                            order_name = order_item['food_item'].lower(
+                            ).strip()
+
+                            print(
+                                f"Debug - Comparing: '{remove_name}' with '{order_name}'")
+
                             if ('fries' in remove_name and 'fries' in order_name) or \
                                ('drink' in remove_name and 'drink' in order_name) or \
                                (remove_name in order_name):
                                 should_keep = False
                                 items_removed.append(order_item['food_item'])
                                 break
-                    
+
                     if should_keep:
                         orders[session_id].append(order_item)
-            
+
             # Handle additions
             if 'add' in actions and items_to_add:
                 for item_to_add in items_to_add:
@@ -439,37 +453,40 @@ def webhook():
                             'food_item': item_to_add,
                             'quantity': 1
                         })
-            
+
             print(f"Debug - Final order: {orders[session_id]}")
-            
+
             # Prepare response
             response_parts = []
             if items_removed:
-                response_parts.append(f"I've removed {', '.join(items_removed)} from your order")
+                response_parts.append(
+                    f"I've removed {', '.join(items_removed)} from your order")
             if items_to_add:
-                response_parts.append(f"I've added {', '.join(items_to_add)} to your order")
-            
+                response_parts.append(
+                    f"I've added {', '.join(items_to_add)} to your order")
+
             response = f"{' and '.join(response_parts)}. Would you like anything else?"
             if not response_parts:
                 response = "I couldn't understand what you wanted to modify. Please try again."
-            
+
             return create_response(response)
 
         elif intent_name == 'SandwichSpicyOrNot':
             if session_id not in awaiting_menu_response:
                 awaiting_menu_response[session_id] = {}
-            
+
             awaiting_menu_response[session_id] = {
                 'context': 'sandwich_spicy',
                 'asked_about': 'spicy'
             }
-            return create_response("Would you like your chicken sandwich spicy or regular?")
+            response_message = "Would you like your chicken sandwich spicy or regular?"
+            return create_response_message(response_message)
 
         elif intent_name == 'SandwichSpicyOrNot - custom':
             response = query_text.lower()
             if session_id not in orders:
                 orders[session_id] = []
-                
+
             if 'spicy' in response:
                 orders[session_id].append({
                     'food_item': 'Spicy Chicken Sandwich',
@@ -480,16 +497,16 @@ def webhook():
                     'food_item': 'Chicken Sandwich',
                     'quantity': 1
                 })
-            
+
             awaiting_more_items[session_id] = True
-            return create_response("I've added your sandwich to the order. Would you like anything else?")
+            response_message = "I've added your sandwich to the order. Would you like anything else?"
+            return create_response_message(response_message)
 
         elif intent_name == 'ReviewOrder':
             order_items = orders.get(session_id, [])
             if not order_items:
-                return jsonify({
-                    'fulfillmentText': "You haven't ordered anything yet."
-                })
+                response_message = "You haven't ordered anything yet."
+                return create_response_message(response_message)
 
             order_summary = ''
             for item in order_items:
@@ -498,16 +515,18 @@ def webhook():
                 order_summary += f"{quantity} x {food_item}\n"
 
             total_price = calculate_total(order_items)
-            return create_response(f"Here's your current order:\n{order_summary}\nTotal: ${total_price:.2f}")
+            response_message = f"Here's your current order:\n{order_summary}\nTotal: ${total_price:.2f}"
+            return create_response_message(response_message)
 
         elif intent_name == 'OrderCompletion':
             order_items = orders.get(session_id, [])
             if not order_items:
-                return create_response("It seems you haven't ordered anything yet. What would you like to order?")
+                response_message = "It seems you haven't ordered anything yet. What would you like to order?"
+                return create_response_message(response_message)
 
             # Mark this session as awaiting confirmation
             awaiting_order_confirmation[session_id] = True
-            
+
             order_summary = ''
             for item in order_items:
                 quantity = item.get('quantity', 1)
@@ -516,7 +535,11 @@ def webhook():
                 order_summary += f"{quantity} x {food_item} (${price:.2f} each)\n"
 
             total_price = calculate_total(order_items)
-            return create_response(f"Thank you for your order! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nWould you like to confirm your order?")
+            response_message = (
+                f"Thank you for your order! Here's what you ordered:\n{order_summary}"
+                f"\nTotal: ${total_price:.2f}\nWould you like to confirm your order?"
+            )
+            return create_response_message(response_message)
 
         elif intent_name == 'ConfirmOrder':
             # Check if we're in a menu query context
@@ -524,22 +547,25 @@ def webhook():
                 menu_context = awaiting_menu_response[session_id]
                 item_name = menu_context['item']
                 item = menu_items[item_name]
-                
+
                 if menu_context['asked_about'] == 'price':
                     # They asked about ingredients, now want price
                     awaiting_menu_response.pop(session_id)
-                    return create_response(f"The {item_name} costs ${item['price']:.2f}. Would you like to order one?")
+                    response_message = f"The {item_name} costs ${item['price']:.2f}. Would you like to order one?"
+                    return create_response_message(response_message)
                 elif menu_context['asked_about'] == 'ingredients':
                     # They asked about price, now want ingredients
                     awaiting_menu_response.pop(session_id)
-                    return create_response(f"The {item_name} is made with {', '.join(item['ingredients'])}. Would you like to order one?")
-            
+                    response_message = f"The {item_name} is made with {', '.join(item['ingredients'])}. Would you like to order one?"
+                    return create_response_message(response_message)
+
             # Only process order confirmation if we're actually awaiting one
             elif session_id in awaiting_order_confirmation:
                 order_items = orders.get(session_id, [])
                 if not order_items:
                     awaiting_order_confirmation.pop(session_id, None)
-                    return create_response("It seems you haven't ordered anything yet. What would you like to order?")
+                    response_message = "It seems you haven't ordered anything yet. What would you like to order?"
+                    return create_response_message(response_message)
 
                 # Process the confirmation
                 order_summary = ''
@@ -549,49 +575,59 @@ def webhook():
                     order_summary += f"{quantity} x {food_item}\n"
 
                 total_price = calculate_total(order_items)
-                
+
                 # Clear the order and confirmation status after processing
                 orders[session_id] = []
                 awaiting_order_confirmation.pop(session_id, None)
-                
-                return create_response(f"Your order has been confirmed! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!")
+
+                response_message = (
+                    f"Your order has been confirmed! Here's what you ordered:\n{order_summary}"
+                    f"\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!"
+                )
+                return create_response_message(response_message)
             else:
-                return create_response("I'm not sure what you're confirming. Would you like to place an order?")
+                response_message = "I'm not sure what you're confirming. Would you like to place an order?"
+                return create_response_message(response_message)
 
         elif intent_name == 'Default Welcome Intent':
-            return create_response("Welcome to Chick-fil-A! How can I help you today?")
+            response_message = "Welcome to Chick-fil-A! How can I help you today?"
+            return create_response_message(response_message)
 
         elif intent_name == 'MenuQuery':
             menu_category = parameters.get('menucategory', '').lower()
             food_item = parameters.get('fooditem', '')
-            
+
             # If a specific item was asked about
             if food_item:
                 if food_item in menu_items:
                     ingredients = menu_items[food_item]['ingredients']
                     price = menu_items[food_item]['price']
-                    
+
                     awaiting_menu_response[session_id] = {
                         'item': food_item,
                         'asked_about': 'ingredients'
                     }
-                    
-                    return create_response(f"{food_item} contains: {', '.join(ingredients)}. Would you like to know the price?")
-            
+
+                    response_message = f"{food_item} contains: {', '.join(ingredients)}. Would you like to know the price?"
+                    return create_response_message(response_message)
+
             # If a specific category was requested
             elif menu_category:
                 items = get_menu_items_by_category(menu_category)
                 if items:
                     items_text = ", ".join(items)
-                    return create_response(f"Here are our {menu_category} options: {items_text}")
+                    response_message = f"Here are our {menu_category} options: {items_text}"
+                    return create_response_message(response_message)
                 else:
-                    return create_response(f"I'm sorry, I don't have information about {menu_category}.")
-            
+                    response_message = f"I'm sorry, I don't have information about {menu_category}."
+                    return create_response_message(response_message)
+
             # If no specific category or item was mentioned
             else:
                 categories = list(menu_items.keys())
                 categories_text = ", ".join(categories)
-                return create_response(f"We have several menu categories: {categories_text}. Which would you like to know more about?")
+                response_message = f"We have several menu categories: {categories_text}. Which would you like to know more about?"
+                return create_response_message(response_message)
 
         elif intent_name == 'Yes':
             # Check if we're awaiting order confirmation
@@ -599,7 +635,8 @@ def webhook():
                 order_items = orders.get(session_id, [])
                 if not order_items:
                     awaiting_order_confirmation.pop(session_id)
-                    return create_response("It seems you haven't ordered anything yet. What would you like to order?")
+                    response_message = "It seems you haven't ordered anything yet. What would you like to order?"
+                    return create_response_message(response_message)
 
                 # Process the confirmation
                 order_summary = ''
@@ -609,29 +646,33 @@ def webhook():
                     order_summary += f"{quantity} x {food_item}\n"
 
                 total_price = calculate_total(order_items)
-                
+
                 # Clear the order and confirmation status after processing
                 orders[session_id] = []
                 awaiting_order_confirmation.pop(session_id)
-                
-                return create_response(f"Your order has been confirmed! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!")
-            
+
+                response_message = (
+                    f"Your order has been confirmed! Here's what you ordered:\n{order_summary}"
+                    f"\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!"
+                )
+                return create_response_message(response_message)
+
             # Handle other Yes responses (menu queries, etc.)
             elif session_id in awaiting_menu_response:
                 menu_context = awaiting_menu_response[session_id]
                 item_name = menu_context['item']
-                
+
                 if menu_context['asked_about'] == 'ingredients':
                     # They asked about ingredients, now want price
                     price = price_list.get(item_name, "price not available")
-                    response = f"The {item_name} costs ${price:.2f}. Would you like to order one?"
+                    response_message = f"The {item_name} costs ${price:.2f}. Would you like to order one?"
                     # Update context to order
                     awaiting_menu_response[session_id] = {
                         'item': item_name,
                         'asked_about': 'order'
                     }
-                    return create_response(response)
-                
+                    return create_response_message(response_message)
+
                 elif menu_context['asked_about'] == 'order':
                     # They want to order the item
                     if session_id not in orders:
@@ -640,9 +681,12 @@ def webhook():
                         'food_item': item_name,
                         'quantity': 1
                     })
-                    awaiting_menu_response.pop(session_id)  # Clear menu context
-                    awaiting_more_items[session_id] = True  # Set the new context
-                    return create_response(f"I've added 1 {item_name} to your order. Would you like anything else?")
+                    awaiting_menu_response.pop(
+                        session_id)  # Clear menu context
+                    # Set the new context
+                    awaiting_more_items[session_id] = True
+                    response_message = f"I've added 1 {item_name} to your order. Would you like anything else?"
+                    return create_response_message(response_message)
 
         elif intent_name == 'No':
             if session_id in awaiting_more_items:
@@ -650,65 +694,67 @@ def webhook():
                 awaiting_more_items.pop(session_id)
                 order_items = orders.get(session_id, [])
                 if not order_items:
-                    return create_response("I don't see any items in your order. Would you like to order something?")
-                    
+                    response_message = "I don't see any items in your order. Would you like to order something?"
+                    return create_response_message(response_message)
+
                 # Generate order summary
                 order_summary = ''
                 for item in order_items:
                     quantity = item.get('quantity', 1)
                     food_item = item['food_item']
                     order_summary += f"{quantity} x {food_item}\n"
-                    
+
                 total_price = calculate_total(order_items)
                 awaiting_order_confirmation[session_id] = True
-                
-                return create_response(
+
+                response_message = (
                     f"Here's your order summary:\n{order_summary}\n"
                     f"Total: ${total_price:.2f}\n"
                     "Would you like to confirm this order?"
                 )
+                return create_response_message(response_message)
             else:
-                return create_response("I'm not sure what you're saying no to. Would you like to place an order?")
+                response_message = "I'm not sure what you're saying no to. Would you like to place an order?"
+                return create_response_message(response_message)
 
         elif intent_name == 'NuggetType':
             nugget_type = query_text.lower()
             if session_id not in awaiting_menu_response:
                 awaiting_menu_response[session_id] = {}
-            
+
             print(f"Processing nugget type: {nugget_type}")
             awaiting_menu_response[session_id] = {
                 'context': 'nugget_count',
                 'nugget_type': 'regular' if 'regular' in nugget_type else 'grilled'
             }
-            return create_response("Would you like an 8-count or 12-count?")
+            response_message = "Would you like an 8-count or 12-count?"
+            return create_response_message(response_message)
 
         elif intent_name == 'NuggetCount':
             if session_id in awaiting_menu_response and awaiting_menu_response[session_id].get('context') == 'nugget_count':
                 count = '12' if '12' in query_text else '8'
-                nugget_type = awaiting_menu_response[session_id].get('nugget_type', 'regular')
-                
+                nugget_type = awaiting_menu_response[session_id].get(
+                    'nugget_type', 'regular')
+
                 # Get the correct nugget item name
                 nugget_item = nugget_options[nugget_type][count]
-                
-                # Initialize orders if needed
-                if session_id not in orders:
-                    orders[session_id] = []
-                
+
                 # Add to orders
                 orders[session_id].append({
                     'food_item': nugget_item,
                     'quantity': 1
                 })
-                
+
                 # Clear nugget context and set awaiting more items
                 awaiting_menu_response.pop(session_id)
                 awaiting_more_items[session_id] = True
-                
+
                 print(f"Added nuggets to order: {nugget_item}")
-                return create_response(f"I've added {nugget_item} to your order. Would you like anything else?")
+                response_message = f"I've added {nugget_item} to your order. Would you like anything else?"
+                return create_response_message(response_message)
             else:
                 return create_response("I'm not sure what type of nuggets you'd like. Would you like regular or grilled nuggets?")
-        
+
         elif intent_name == 'ClearOrder':
             if session_id in orders and orders[session_id]:
                 orders[session_id] = []  # Clear the order
@@ -718,44 +764,48 @@ def webhook():
 
         elif intent_name:  # If we have an intent name but didn't handle it
             print(f"WARNING: Unhandled intent: {intent_name}")
-            return jsonify({
-                'fulfillmentText': f"Debug: Received intent '{intent_name}' but no handler found."
-            })
+            response_message = f"Debug: Received intent '{intent_name}' but no handler found."
+            return create_response_message(response_message)
         else:
             print("WARNING: No intent name found in request")
-            return jsonify({
-                'fulfillmentText': "I'm sorry, I didn't understand that. Could you please rephrase?"
-            })
-
-        print(f"Current orders after processing: {orders.get(session_id, [])}")
-
-        # Default return at the end of the function
-        return create_response("I'm processing your request. What would you like to order?")
+            response_message = "I'm sorry, I didn't understand that. Could you please rephrase?"
+            return create_response_message(response_message)
 
     except Exception as e:
-        print(f"Error in webhook: {str(e)}")
+        print(f"Error in process_webhook: {str(e)}")
         import traceback
         traceback.print_exc()
-        return create_response("I encountered an error processing your request. Could you please try again?")
+        return {
+            'fulfillmentText': "I encountered an error processing your request. Could you please try again?"
+        }
+
+    except Exception as e:
+        print(f"Error in process_webhook: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'fulfillmentText': "I encountered an error processing your request. Could you please try again?"
+        }
 
 
 @app.route('/dialogflow', methods=['POST'])
 def handle_dialogflow():
     try:
         data = request.get_json(silent=True, force=True)
-        
+
         if 'sessionId' in data and 'text' in data:  # Direct text input
             session_id = data.get('sessionId')
             user_text = data.get('text')
-            
-            session = app.dialogflow_client.session_path('fast-food-chatbot', session_id)
+
+            session = app.dialogflow_client.session_path(
+                'fast-food-chatbot', session_id)
             text_input = TextInput(text=user_text, language_code='en')
             query_input = QueryInput(text=text_input)
-            
+
             response = app.dialogflow_client.detect_intent(
                 request={'session': session, 'query_input': query_input}
             )
-            
+
             # Convert parameters to JSON-serializable format
             def convert_proto_value(value):
                 if hasattr(value, 'values'):  # RepeatedComposite
@@ -764,8 +814,9 @@ def handle_dialogflow():
                     return {k: convert_proto_value(v) for k, v in value.fields.items()}
                 return str(value) if value else []
 
-            parameters = {k: convert_proto_value(v) for k, v in response.query_result.parameters.items()}
-            
+            parameters = {k: convert_proto_value(
+                v) for k, v in response.query_result.parameters.items()}
+
             return jsonify({
                 'fulfillmentText': response.query_result.fulfillment_text,
                 'intent': response.query_result.intent.display_name,
@@ -778,13 +829,14 @@ def handle_dialogflow():
             return jsonify({
                 'fulfillmentText': "Invalid request format"
             }), 400
-            
+
     except Exception as e:
         print(f"Error in handle_dialogflow: {str(e)}")
         return jsonify({
             'error': str(e),
             'fulfillmentText': "I encountered an error processing your request. Could you please try again?"
         }), 500
+
 
 def process_webhook_request(req):
     try:
@@ -837,39 +889,41 @@ def process_webhook_request(req):
             food_items = parameters.get('FoodItem', [])
             default_size = parameters.get('Size', 'Medium')
             query = query_text.lower()
-            
+
             if session_id not in orders:
                 orders[session_id] = []
-                
+
             added_items = []
-            
+
             # Split query into individual items and clean up
             query = re.sub(r'^can i get |^can i have |^i want ', '', query)
             query = query.replace(',', ' and ')
             items = [item.strip() for item in query.split(' and ')]
-            
+
             print(f"Processing items: {items}")
-            
+
             # Process each item in the query
             for item in items:
                 item_size = default_size  # Start with default size
                 item_quantity = 1     # Default quantity
                 original_item = item  # Keep original item text for reference
-                
+
                 # Extract quantity
                 quantity_match = re.match(r'^(\d+)', item)
                 if quantity_match:
                     item_quantity = int(quantity_match.group(1))
                     item = item[len(quantity_match.group(0)):].strip()
-                
+
                 # Extract size from the item text
-                size_match = re.search(r'(small|medium|large)', item, re.IGNORECASE)
+                size_match = re.search(
+                    r'(small|medium|large)', item, re.IGNORECASE)
                 if size_match:
                     item_size = size_match.group(1).capitalize()
                     item = item.replace(size_match.group(1), '').strip()
-                
-                print(f"Processing: {original_item} -> Quantity: {item_quantity}, Size: {item_size}")
-                
+
+                print(
+                    f"Processing: {original_item} -> Quantity: {item_quantity}, Size: {item_size}")
+
                 # Match item to menu items
                 matched_item = None
                 if 'fry' in item or 'fries' in item:
@@ -894,20 +948,22 @@ def process_webhook_request(req):
                             matched_item = food_item
                             full_item_name = food_item
                             break
-                
+
                 if matched_item:
                     orders[session_id].append({
                         'food_item': full_item_name,
                         'quantity': item_quantity
                     })
-                    added_items.append(f"{item_quantity} {full_item_name}" if item_quantity > 1 else full_item_name)
-                    print(f"Added item: {full_item_name} (Quantity: {item_quantity})")
-            
+                    added_items.append(
+                        f"{item_quantity} {full_item_name}" if item_quantity > 1 else full_item_name)
+                    print(
+                        f"Added item: {full_item_name} (Quantity: {item_quantity})")
+
             if added_items:
                 items_text = ", ".join(added_items)
                 awaiting_more_items[session_id] = True
                 return create_response(f"I've added {items_text} to your order. Would you like anything else?")
-            
+
             return create_response("I didn't catch what food item you wanted. Could you please repeat that?")
 
         elif intent_name == 'OrderFood - size':
@@ -947,7 +1003,7 @@ def process_webhook_request(req):
         elif intent_name == 'OrderNuggets':
             if session_id not in awaiting_menu_response:
                 awaiting_menu_response[session_id] = {}
-            
+
             awaiting_menu_response[session_id] = {
                 'context': 'nugget_type',
                 'item': 'nuggets'
@@ -961,45 +1017,50 @@ def process_webhook_request(req):
             items_to_remove = parameters.get('ItemsToRemove', '')
             items_to_add = parameters.get('ItemsToAdd', [])
             food_items = parameters.get('FoodItem', [])
-            
-            print(f"Debug - Actions: {actions}, Remove: {items_to_remove}, Add: {items_to_add}, FoodItems: {food_items}")
-            
+
+            print(
+                f"Debug - Actions: {actions}, Remove: {items_to_remove}, Add: {items_to_add}, FoodItems: {food_items}")
+
             # If we have a remove action and FoodItem but no ItemsToRemove, use FoodItem
             if 'remove' in actions and food_items and not items_to_remove:
                 items_to_remove = food_items
-            
+
             # Ensure lists
-            items_to_remove = [items_to_remove] if isinstance(items_to_remove, str) else items_to_remove
-            items_to_add = [items_to_add] if isinstance(items_to_add, str) else items_to_add
-            
+            items_to_remove = [items_to_remove] if isinstance(
+                items_to_remove, str) else items_to_remove
+            items_to_add = [items_to_add] if isinstance(
+                items_to_add, str) else items_to_add
+
             print(f"Debug - Final items to remove: {items_to_remove}")
             print(f"Debug - Final items to add: {items_to_add}")
-            
+
             # Handle removals
             if 'remove' in actions and items_to_remove:
                 original_order = orders[session_id].copy()
                 orders[session_id] = []
                 items_removed = []
-                
+
                 for order_item in original_order:
                     should_keep = True
                     for item_to_remove in items_to_remove:
                         if isinstance(item_to_remove, str) and item_to_remove.strip():
                             remove_name = item_to_remove.lower().strip()
-                            order_name = order_item['food_item'].lower().strip()
-                            
-                            print(f"Debug - Comparing: '{remove_name}' with '{order_name}'")
-                            
+                            order_name = order_item['food_item'].lower(
+                            ).strip()
+
+                            print(
+                                f"Debug - Comparing: '{remove_name}' with '{order_name}'")
+
                             if ('fries' in remove_name and 'fries' in order_name) or \
                                ('drink' in remove_name and 'drink' in order_name) or \
                                (remove_name in order_name):
                                 should_keep = False
                                 items_removed.append(order_item['food_item'])
                                 break
-                    
+
                     if should_keep:
                         orders[session_id].append(order_item)
-            
+
             # Handle additions
             if 'add' in actions and items_to_add:
                 for item_to_add in items_to_add:
@@ -1008,26 +1069,28 @@ def process_webhook_request(req):
                             'food_item': item_to_add,
                             'quantity': 1
                         })
-            
+
             print(f"Debug - Final order: {orders[session_id]}")
-            
+
             # Prepare response
             response_parts = []
             if items_removed:
-                response_parts.append(f"I've removed {', '.join(items_removed)} from your order")
+                response_parts.append(
+                    f"I've removed {', '.join(items_removed)} from your order")
             if items_to_add:
-                response_parts.append(f"I've added {', '.join(items_to_add)} to your order")
-            
+                response_parts.append(
+                    f"I've added {', '.join(items_to_add)} to your order")
+
             response = f"{' and '.join(response_parts)}. Would you like anything else?"
             if not response_parts:
                 response = "I couldn't understand what you wanted to modify. Please try again."
-            
+
             return create_response(response)
 
         elif intent_name == 'SandwichSpicyOrNot':
             if session_id not in awaiting_menu_response:
                 awaiting_menu_response[session_id] = {}
-            
+
             awaiting_menu_response[session_id] = {
                 'context': 'sandwich_spicy',
                 'asked_about': 'spicy'
@@ -1038,7 +1101,7 @@ def process_webhook_request(req):
             response = query_text.lower()
             if session_id not in orders:
                 orders[session_id] = []
-                
+
             if 'spicy' in response:
                 orders[session_id].append({
                     'food_item': 'Spicy Chicken Sandwich',
@@ -1049,7 +1112,7 @@ def process_webhook_request(req):
                     'food_item': 'Chicken Sandwich',
                     'quantity': 1
                 })
-            
+
             awaiting_more_items[session_id] = True
             return create_response("I've added your sandwich to the order. Would you like anything else?")
 
@@ -1076,7 +1139,7 @@ def process_webhook_request(req):
 
             # Mark this session as awaiting confirmation
             awaiting_order_confirmation[session_id] = True
-            
+
             order_summary = ''
             for item in order_items:
                 quantity = item.get('quantity', 1)
@@ -1093,7 +1156,7 @@ def process_webhook_request(req):
                 menu_context = awaiting_menu_response[session_id]
                 item_name = menu_context['item']
                 item = menu_items[item_name]
-                
+
                 if menu_context['asked_about'] == 'price':
                     # They asked about ingredients, now want price
                     awaiting_menu_response.pop(session_id)
@@ -1102,7 +1165,7 @@ def process_webhook_request(req):
                     # They asked about price, now want ingredients
                     awaiting_menu_response.pop(session_id)
                     return create_response(f"The {item_name} is made with {', '.join(item['ingredients'])}. Would you like to order one?")
-            
+
             # Only process order confirmation if we're actually awaiting one
             elif session_id in awaiting_order_confirmation:
                 order_items = orders.get(session_id, [])
@@ -1118,11 +1181,11 @@ def process_webhook_request(req):
                     order_summary += f"{quantity} x {food_item}\n"
 
                 total_price = calculate_total(order_items)
-                
+
                 # Clear the order and confirmation status after processing
                 orders[session_id] = []
                 awaiting_order_confirmation.pop(session_id, None)
-                
+
                 return create_response(f"Your order has been confirmed! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!")
             else:
                 return create_response("I'm not sure what you're confirming. Would you like to place an order?")
@@ -1133,20 +1196,20 @@ def process_webhook_request(req):
         elif intent_name == 'MenuQuery':
             menu_category = parameters.get('menucategory', '').lower()
             food_item = parameters.get('fooditem', '')
-            
+
             # If a specific item was asked about
             if food_item:
                 if food_item in menu_items:
                     ingredients = menu_items[food_item]['ingredients']
                     price = menu_items[food_item]['price']
-                    
+
                     awaiting_menu_response[session_id] = {
                         'item': food_item,
                         'asked_about': 'ingredients'
                     }
-                    
+
                     return create_response(f"{food_item} contains: {', '.join(ingredients)}. Would you like to know the price?")
-            
+
             # If a specific category was requested
             elif menu_category:
                 items = get_menu_items_by_category(menu_category)
@@ -1155,7 +1218,7 @@ def process_webhook_request(req):
                     return create_response(f"Here are our {menu_category} options: {items_text}")
                 else:
                     return create_response(f"I'm sorry, I don't have information about {menu_category}.")
-            
+
             # If no specific category or item was mentioned
             else:
                 categories = list(menu_items.keys())
@@ -1178,18 +1241,18 @@ def process_webhook_request(req):
                     order_summary += f"{quantity} x {food_item}\n"
 
                 total_price = calculate_total(order_items)
-                
+
                 # Clear the order and confirmation status after processing
                 orders[session_id] = []
                 awaiting_order_confirmation.pop(session_id)
-                
+
                 return create_response(f"Your order has been confirmed! Here's what you ordered:\n{order_summary}\nTotal: ${total_price:.2f}\nThank you for choosing Chick-fil-A!")
-            
+
             # Handle other Yes responses (menu queries, etc.)
             elif session_id in awaiting_menu_response:
                 menu_context = awaiting_menu_response[session_id]
                 item_name = menu_context['item']
-                
+
                 if menu_context['asked_about'] == 'ingredients':
                     # They asked about ingredients, now want price
                     price = price_list.get(item_name, "price not available")
@@ -1200,7 +1263,7 @@ def process_webhook_request(req):
                         'asked_about': 'order'
                     }
                     return create_response(response)
-                
+
                 elif menu_context['asked_about'] == 'order':
                     # They want to order the item
                     if session_id not in orders:
@@ -1209,8 +1272,10 @@ def process_webhook_request(req):
                         'food_item': item_name,
                         'quantity': 1
                     })
-                    awaiting_menu_response.pop(session_id)  # Clear menu context
-                    awaiting_more_items[session_id] = True  # Set the new context
+                    awaiting_menu_response.pop(
+                        session_id)  # Clear menu context
+                    # Set the new context
+                    awaiting_more_items[session_id] = True
                     return create_response(f"I've added 1 {item_name} to your order. Would you like anything else?")
 
         elif intent_name == 'No':
@@ -1220,17 +1285,17 @@ def process_webhook_request(req):
                 order_items = orders.get(session_id, [])
                 if not order_items:
                     return create_response("I don't see any items in your order. Would you like to order something?")
-                    
+
                 # Generate order summary
                 order_summary = ''
                 for item in order_items:
                     quantity = item.get('quantity', 1)
                     food_item = item['food_item']
                     order_summary += f"{quantity} x {food_item}\n"
-                    
+
                 total_price = calculate_total(order_items)
                 awaiting_order_confirmation[session_id] = True
-                
+
                 return create_response(
                     f"Here's your order summary:\n{order_summary}\n"
                     f"Total: ${total_price:.2f}\n"
@@ -1243,7 +1308,7 @@ def process_webhook_request(req):
             nugget_type = query_text.lower()
             if session_id not in awaiting_menu_response:
                 awaiting_menu_response[session_id] = {}
-            
+
             print(f"Processing nugget type: {nugget_type}")
             awaiting_menu_response[session_id] = {
                 'context': 'nugget_count',
@@ -1254,30 +1319,31 @@ def process_webhook_request(req):
         elif intent_name == 'NuggetCount':
             if session_id in awaiting_menu_response and awaiting_menu_response[session_id].get('context') == 'nugget_count':
                 count = '12' if '12' in query_text else '8'
-                nugget_type = awaiting_menu_response[session_id].get('nugget_type', 'regular')
-                
+                nugget_type = awaiting_menu_response[session_id].get(
+                    'nugget_type', 'regular')
+
                 # Get the correct nugget item name
                 nugget_item = nugget_options[nugget_type][count]
-                
+
                 # Initialize orders if needed
                 if session_id not in orders:
                     orders[session_id] = []
-                
+
                 # Add to orders
                 orders[session_id].append({
                     'food_item': nugget_item,
                     'quantity': 1
                 })
-                
+
                 # Clear nugget context and set awaiting more items
                 awaiting_menu_response.pop(session_id)
                 awaiting_more_items[session_id] = True
-                
+
                 print(f"Added nuggets to order: {nugget_item}")
                 return create_response(f"I've added {nugget_item} to your order. Would you like anything else?")
             else:
                 return create_response("I'm not sure what type of nuggets you'd like. Would you like regular or grilled nuggets?")
-        
+
         elif intent_name == 'ClearOrder':
             if session_id in orders and orders[session_id]:
                 orders[session_id] = []  # Clear the order
