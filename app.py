@@ -686,25 +686,33 @@ def dialogflow_webhook():
     global dialogflow_client
     try:
         data = request.get_json()
+        print(f"Received data: {data}")  # Debug log
 
         # Get or generate session ID
         session_id = data.get('sessionId', f"web-{int(time.time() * 1000)}")
 
         # Create the correct session path for Dialogflow ES
         project_id = 'fast-food-chatbot'  # your project ID
-        session = f"projects/{project_id}/agent/sessions/{session_id}"
+        session_path = dialogflow_client.session_path(project_id, session_id)
+        print(f"Session path: {session_path}")  # Debug log
 
-        # Create the text input
-        text_input = TextInput(text=data['text'], language_code='en')
-        query_input = QueryInput(text=text_input)
-
-        # Detect intent
-        response = dialogflow_client.detect_intent(
-            request={
-                'session': session,
-                'query_input': query_input
+        # Create the properly formatted request
+        request_data = {
+            'session': session_path,
+            'query_input': {
+                'text': {
+                    'text': data.get('text', ''),
+                    'language_code': 'en-US'
+                }
             }
-        )
+        }
+
+        print(f"Sending request to Dialogflow: {request_data}")  # Debug log
+
+        # Detect intent with properly formatted request
+        response = dialogflow_client.detect_intent(request_data)
+
+        print("Received response from Dialogflow")  # Debug log
 
         # Process response
         query_result = response.query_result
@@ -736,6 +744,7 @@ def dialogflow_webhook():
             'queryText': query_result.query_text
         }
 
+        print(f"Sending response: {response_data}")  # Debug log
         return jsonify(response_data)
 
     except Exception as e:
