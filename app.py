@@ -170,7 +170,8 @@ HANDLED_INTENTS = [
     'SandwichSpicyOrNot - custom',
     'OrderNuggets',
     'NuggetType',
-    'NuggetCount'
+    'NuggetCount',
+    'OrderNuggets'
 ]
 
 @app.route('/webhook', methods=['POST'])
@@ -223,80 +224,61 @@ def webhook():
 
         if intent_name == 'OrderFood':
             food_items = parameters.get('FoodItem', [])
-            default_size = parameters.get('Size', 'Medium')
+            sizes = parameters.get('Size', [])
+            numbers = parameters.get('number', [])
             query = query_text.lower()
-            
+
+            # Initialize order items if not exists
             if session_id not in orders:
                 orders[session_id] = []
-                
-            added_items = []
-            
-            # Split query into individual items and clean up
-            query = re.sub(r'^can i get |^can i have |^i want ', '', query)
-            query = query.replace(',', ' and ')
-            items = [item.strip() for item in query.split(' and ')]
-            
-            print(f"Processing items: {items}")
-            
-            # Process each item in the query
-            for item in items:
-                item_size = default_size  # Start with default size
-                item_quantity = 1     # Default quantity
-                original_item = item  # Keep original item text for reference
-                
-                # Extract quantity
-                quantity_match = re.match(r'^(\d+)', item)
-                if quantity_match:
-                    item_quantity = int(quantity_match.group(1))
-                    item = item[len(quantity_match.group(0)):].strip()
-                
-                # Extract size from the item text
-                size_match = re.search(r'(small|medium|large)', item, re.IGNORECASE)
-                if size_match:
-                    item_size = size_match.group(1).capitalize()
-                    item = item.replace(size_match.group(1), '').strip()
-                
-                print(f"Processing: {original_item} -> Quantity: {item_quantity}, Size: {item_size}")
-                
-                # Match item to menu items
-                matched_item = None
-                if 'fry' in item or 'fries' in item:
-                    matched_item = 'Waffle Fries'
-                    full_item_name = f"Waffle Potato Fries ({item_size})"
-                elif 'drink' in item or 'soda' in item or 'beverage' in item:
-                    matched_item = 'Soft Drink'
-                    full_item_name = f"Soft Drink ({item_size})"
-                elif 'milkshake' in item or 'shake' in item:
-                    matched_item = 'Milkshake'
-                    full_item_name = f"Milkshake ({item_size})"
-                elif 'lemonade' in item:
-                    matched_item = 'Lemonade'
-                    full_item_name = f"Lemonade ({item_size})"
-                elif 'tea' in item:
-                    matched_item = 'Iced Tea'
-                    full_item_name = f"Iced Tea ({item_size})"
+
+            # Initialize index for sizes
+            size_idx = 0
+
+            for idx, food_item in enumerate(food_items):
+                # Map the food item name to the menu item
+                mapped_item = item_name_mapping.get(food_item, food_item)
+
+                # Determine quantity
+                if idx < len(numbers) and numbers[idx]:
+                    quantity = int(numbers[idx])
                 else:
-                    # For non-size items, use the FoodItem from parameters
-                    for food_item in food_items:
-                        if food_item.lower() in item.lower():
-                            matched_item = food_item
-                            full_item_name = food_item
-                            break
-                
-                if matched_item:
-                    orders[session_id].append({
-                        'food_item': full_item_name,
-                        'quantity': item_quantity
-                    })
-                    added_items.append(f"{item_quantity} {full_item_name}" if item_quantity > 1 else full_item_name)
-                    print(f"Added item: {full_item_name} (Quantity: {item_quantity})")
-            
-            if added_items:
-                items_text = ", ".join(added_items)
-                awaiting_more_items[session_id] = True
-                return create_response(f"I've added {items_text} to your order. Would you like anything else?")
-            
-            return create_response("I didn't catch what food item you wanted. Could you please repeat that?")
+                    quantity = 1  # Default quantity
+
+                # Determine if the item requires a size
+                if mapped_item in size_required_items:
+                    if size_idx < len(sizes):
+                        size = sizes[size_idx]
+                        size_idx += 1  # Move to the next size for subsequent items
+                    else:
+                        size = 'Medium'  # Default size
+                    full_item_name = f"{mapped_item} ({size})"
+                else:
+                    full_item_name = mapped_item
+
+                # Add the item to the order
+                order_item = {
+                    'food_item': full_item_name,
+                    'quantity': quantity
+                }
+                orders[session_id].append(order_item)
+                print(f"Added item: {full_item_name} (Quantity: {quantity})")
+
+            # Create order summary
+            order_summary = []
+            for item in orders[session_id]:
+                order_summary.append(f"{item['quantity']} x {item['food_item']}")
+
+            # Set context for additional items
+            awaiting_more_items[session_id] = True
+
+            if order_summary:
+                response = "I've added to your order:\n" + "\n".join(order_summary)
+                response += "\nWould you like anything else?"
+                return create_response(response)
+            else:
+                return create_response("I couldn't understand the items you want to order. Could you please rephrase your order?")
+
 
         elif intent_name == 'OrderFood - size':
             size = parameters.get('size', '')
